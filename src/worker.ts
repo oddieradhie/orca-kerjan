@@ -3,6 +3,8 @@ import type {
   KerjanClientConfigSummary,
   KerjanComment,
   KerjanDashboardData,
+  KerjanEpicItem,
+  KerjanMemberItem,
   KerjanProductItem,
   KerjanSprintItem,
   KerjanStoryItem,
@@ -248,6 +250,44 @@ function normalizeProducts(raw: unknown): KerjanProductItem[] {
   return (list as KerjanProductItem[])
     .filter((p) => p && typeof p.id === 'number' && typeof p.name === 'string')
     .map((p) => ({ id: p.id, name: p.name }))
+}
+
+function normalizeEpics(raw: unknown): KerjanEpicItem[] {
+  const list = Array.isArray(raw)
+    ? raw
+    : raw && typeof raw === 'object' && Array.isArray((raw as { tickets?: unknown }).tickets)
+      ? (raw as { tickets: unknown[] }).tickets
+      : []
+
+  return (list as Array<KerjanTicket & { product_id?: number }>)
+    .filter(
+      (e) =>
+        e &&
+        typeof e.id === 'number' &&
+        typeof e.title === 'string' &&
+        !e.canceled_at &&
+        e.status !== 'canceled'
+    )
+    .map((e) => ({
+      id: e.id,
+      key: e.key,
+      title: e.title,
+      product_id: e.product_id ?? null
+    }))
+    .sort((a, b) => a.title.localeCompare(b.title))
+}
+
+function normalizeMembers(raw: unknown): KerjanMemberItem[] {
+  const list = Array.isArray(raw)
+    ? raw
+    : raw && typeof raw === 'object' && Array.isArray((raw as { members?: unknown }).members)
+      ? (raw as { members: unknown[] }).members
+      : []
+
+  return (list as KerjanMemberItem[])
+    .filter((m) => m && typeof m.id === 'number' && typeof m.name === 'string')
+    .map((m) => ({ id: m.id, name: m.name }))
+    .sort((a, b) => a.name.localeCompare(b.name))
 }
 
 function withAssigneeName<T extends KerjanTicket>(ticket: T, memberMap: Map<number, string>): T {
@@ -857,6 +897,131 @@ export default function activate(orca: OrcaWorkerApi): void {
       } catch (err) {
         const message = errorMessage(err)
         orca.log(`Kerjan createWorktree(${ticketKey}) failed: ${message}`)
+        return { ok: false, error: message }
+      }
+    }
+  )
+
+  orca.panels.handle('kerjan.epics', async (input, { signal }) => {
+    const config = await readConfig(orca)
+    try {
+      const args: Record<string, unknown> = {
+        kind: 'epic',
+        ...(cachedWorkspaceCode ? { workspace: cachedWorkspaceCode } : {})
+      }
+      if (typeof input?.productId === 'number' && input.productId > 0) {
+        args.product_id = input.productId
+      }
+      const raw = await callKerjanTool<unknown>(config, 'list_tickets', args, signal)
+      return { epics: normalizeEpics(raw) }
+    } catch (err) {
+      const message = errorMessage(err)
+      orca.log(`Kerjan list_tickets(epic) failed: ${message}`)
+      return { epics: [], error: message }
+    }
+  })
+
+  orca.panels.handle('kerjan.members', async (_input, { signal }) => {
+    const config = await readConfig(orca)
+    try {
+      const raw = await callKerjanTool<unknown>(config, 'list_members', {}, signal)
+      return { members: normalizeMembers(raw) }
+    } catch (err) {
+      const message = errorMessage(err)
+      orca.log(`Kerjan list_members failed: ${message}`)
+      return { members: [], error: message }
+    }
+  })
+
+  orca.panels.handle(
+    'kerjan.createStory',
+    async ({ epicId, title, description, sprintId }, { signal }) => {
+      const config = await readConfig(orca)
+      try {
+        const args: Record<string, unknown> = {
+          epic_id: epicId,
+          title: title.trim(),
+          ...(cachedWorkspaceCode ? { workspace: cachedWorkspaceCode } : {})
+        }
+        if (description?.trim()) {
+          args.description = description.trim()
+        }
+        if (typeof sprintId === 'number' && sprintId > 0) {
+          args.sprint_id = sprintId
+        }
+        const res = await callKerjanTool<any>(config, 'create_story', args, signal)
+        const storyKey =
+          res?.key ??
+          (typeof res === 'object' && res?.ticket?.key ? res.ticket.key : undefined)
+        const data = await fetchDashboard(orca, signal)
+        orca.panels.post('kerjan.refreshed', data)
+        return { ok: true, key: storyKey }
+      } catch (err) {
+        const message = errorMessage(err)
+        orca.log(`Kerjan create_story failed: ${message}`)
+        return { ok: false, error: message }
+      }
+    }
+  )
+
+  orca.panels.handle(
+    'kerjan.addTask',
+    async ({ storyKey, type, title, estimate, assigneeId, description }, { signal }) => {
+      const config = await readConfig(orca)
+      try {
+        const args: Record<string, unknown> = {
+          key: storyKey,
+          type: type || 'dev',
+          title: title.trim()
+        }
+        if (typeof estimate === 'number' && !Number.isNaN(estimate)) {
+          args.estimate = estimate
+        }
+        if (typeof assigneeId === 'number' && assigneeId > 0) {
+          args.assignee_id = assigneeId
+        }
+        if (description?.trim()) {
+          args.description = description.trim()
+        }
+        const res = await callKerjanTool<any>(config, 'add_task', args, signal)
+        const taskKey =
+          res?.key ??
+          (typeof res === 'object' && res?.ticket?.key ? res.ticket.key : undefined)
+        const data = await fetchDashboard(orca, signal)
+        orca.panels.post('kerjan.refreshed', data)
+        return { ok: true, key: taskKey }
+      } catch (err) {
+        const message = errorMessage(err)
+        orca.log(`Kerjan add_task(${storyKey}) failed: ${message}`)
+        return { ok: false, error: message }
+      }
+    }
+  )
+
+  orca.panels.handle(
+    'kerjan.updateTask',
+    async ({ key, title, description, estimate, assigneeId }, { signal }) => {
+      const config = await readConfig(orca)
+      try {
+        if (title !== undefined || description !== undefined) {
+          const updateArgs: Record<string, unknown> = { key }
+          if (title !== undefined) updateArgs.title = title.trim()
+          if (description !== undefined) updateArgs.description = description.trim()
+          await callKerjanTool(config, 'update_ticket', updateArgs, signal)
+        }
+        if (estimate !== undefined && estimate !== null && !Number.isNaN(estimate)) {
+          await callKerjanTool(config, 'set_estimate', { key, estimate }, signal)
+        }
+        if (assigneeId !== undefined) {
+          await callKerjanTool(config, 'set_assignee', { key, assignee_id: assigneeId }, signal)
+        }
+
+        const data = await fetchDashboard(orca, signal)
+        orca.panels.post('kerjan.refreshed', data)
+        return { ok: true }
+      } catch (err) {
+        const message = errorMessage(err)
+        orca.log(`Kerjan updateTask(${key}) failed: ${message}`)
         return { ok: false, error: message }
       }
     }

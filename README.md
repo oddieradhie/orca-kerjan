@@ -5,6 +5,8 @@ Integrates your Kerjan workspace directly into **Orca** with a right-sidebar pan
 ## Features
 
 - **My Tasks**: View, search, and filter tasks by status (`Active`, `WIP`, `To Do`, `Done`), and update task statuses (`Start`, `Done`, `Move to To Do`) directly from Orca.
+- **Add & Edit Tasks**: Create new development, QA, or defect tasks under any story, or edit existing task details (title, estimate in hours, assignee, description).
+- **Add Story**: Create new stories under target epics directly into the current sprint or backlog.
 - **Sprints**: Browse active, planned, and closed sprints with sprint goals, progress metrics, stories, and tasks.
 - **Backlog**: Browse unscheduled backlog stories filtered by product.
 - **Ticket Details & Comments**: Read full markdown descriptions, inspect story sub-tasks, and post comments without leaving Orca.

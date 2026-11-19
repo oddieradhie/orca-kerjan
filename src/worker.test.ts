@@ -316,3 +316,102 @@ test('returns needsSetup when unconfigured and persists credentials cleanly via 
 
   assert.deepEqual(activeWorker.refusals, [])
 })
+
+test('handles epics, members, createStory, addTask, and updateTask cleanly', async () => {
+  const seenCalls: Array<{ name: string; args: Record<string, unknown> }> = []
+
+  globalThis.fetch = (async (_url: unknown, init?: { body?: unknown }) => {
+    const body = JSON.parse(String(init?.body ?? '{}')) as {
+      params?: { name?: string; arguments?: Record<string, unknown> }
+    }
+    const toolName = body.params?.name ?? ''
+    const args = body.params?.arguments ?? {}
+    seenCalls.push({ name: toolName, args })
+
+    let payload: unknown = {}
+    if (toolName === 'list_tickets' && args.kind === 'epic') {
+      payload = [
+        { id: 10, key: 'PRD-E1', title: 'Epic One', product_id: 24 },
+        { id: 11, key: 'PRD-E2', title: 'Epic Two', product_id: 24 }
+      ]
+    } else if (toolName === 'list_members') {
+      payload = [
+        { id: 35, name: 'Alice Developer' },
+        { id: 42, name: 'Bob Tester' }
+      ]
+    } else if (toolName === 'create_story') {
+      payload = { ticket: { id: 7001, key: 'PRD-3001', title: args.title } }
+    } else if (toolName === 'add_task') {
+      payload = { ticket: { id: 7002, key: 'PRD-3002', title: args.title } }
+    } else if (
+      toolName === 'update_ticket' ||
+      toolName === 'set_estimate' ||
+      toolName === 'set_assignee'
+    ) {
+      payload = { success: true }
+    } else {
+      payload = []
+    }
+
+    return new Response(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          content: [{ type: 'text', text: JSON.stringify(payload) }]
+        }
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    )
+  }) as typeof fetch
+
+  const host = mockHost({
+    settings: {
+      apiUrl: 'https://kerjan.example.dev/api/v1/mcp',
+      apiToken: 'kjp_test_token'
+    },
+    results: {
+      'statusBar.update': { ok: true }
+    }
+  })
+
+  activeWorker = await mountWorker(main, { host })
+
+  const epicsRes = await activeWorker.request('kerjan.epics', { productId: 24 })
+  assert.equal(epicsRes.epics.length, 2)
+  assert.equal(epicsRes.epics[0].title, 'Epic One')
+
+  const membersRes = await activeWorker.request('kerjan.members', {})
+  assert.equal(membersRes.members.length, 2)
+  assert.equal(membersRes.members[0].name, 'Alice Developer')
+
+  const storyRes = await activeWorker.request('kerjan.createStory', {
+    epicId: 10,
+    title: 'New Feature Story',
+    description: 'Criteria...',
+    sprintId: 107
+  })
+  assert.equal(storyRes.ok, true)
+  assert.equal(storyRes.key, 'PRD-3001')
+
+  const taskRes = await activeWorker.request('kerjan.addTask', {
+    storyKey: 'PRD-3001',
+    type: 'dev',
+    title: 'Code implementation',
+    estimate: 4,
+    assigneeId: 35
+  })
+  assert.equal(taskRes.ok, true)
+  assert.equal(taskRes.key, 'PRD-3002')
+
+  const updateRes = await activeWorker.request('kerjan.updateTask', {
+    key: 'PRD-3002',
+    title: 'Updated title',
+    description: 'Updated description',
+    estimate: 6,
+    assigneeId: 42
+  })
+  assert.equal(updateRes.ok, true)
+
+  assert.deepEqual(activeWorker.refusals, [])
+})

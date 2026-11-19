@@ -33,6 +33,8 @@ import {
 } from 'orca'
 import type {
   KerjanDashboardData,
+  KerjanEpicItem,
+  KerjanMemberItem,
   KerjanProductItem,
   KerjanSprintItem,
   KerjanStoryItem,
@@ -82,6 +84,29 @@ const backlogSearchAtom = atom<string>('')
 const showSettingsAtom = atom<boolean>(false)
 const configUrlAtom = atom<string>('')
 const configTokenAtom = atom<string>('')
+
+const membersAtom = atom<KerjanMemberItem[]>([])
+const epicsAtom = atom<KerjanEpicItem[]>([])
+const epicsLoadingAtom = atom<boolean>(false)
+
+const showAddStoryAtom = atom<boolean>(false)
+const addStoryEpicIdAtom = atom<number>(0)
+const addStoryTitleAtom = atom<string>('')
+const addStoryDescAtom = atom<string>('')
+const addStorySprintIdAtom = atom<number | null>(null)
+
+const showAddTaskAtom = atom<boolean>(false)
+const addTaskTypeAtom = atom<string>('dev')
+const addTaskTitleAtom = atom<string>('')
+const addTaskEstimateAtom = atom<string>('')
+const addTaskAssigneeIdAtom = atom<number | null>(null)
+const addTaskDescAtom = atom<string>('')
+
+const isEditingTaskAtom = atom<boolean>(false)
+const editTaskTitleAtom = atom<string>('')
+const editTaskDescAtom = atom<string>('')
+const editTaskEstimateAtom = atom<string>('')
+const editTaskAssigneeIdAtom = atom<number | null>(null)
 
 let activeSignal: AbortSignal | null = null
 
@@ -394,6 +419,9 @@ async function openTicketDetail(ticket: KerjanTicket): Promise<void> {
   set(ticketDetailAtom, null)
   set(detailLoadingAtom, true)
   set(feedbackAtom, null)
+  set(isEditingTaskAtom, false)
+  set(showAddTaskAtom, false)
+  if (read(membersAtom).length === 0) void loadMembers()
   const data = read(dashboardAtom)
   if (data) syncProjectSelection(data, ticket)
 
@@ -535,6 +563,226 @@ async function createWorktreeFromTicket(ticket: KerjanTicket): Promise<void> {
     })
   } finally {
     if (!isAborted()) set(busyActionAtom, null)
+  }
+}
+
+async function loadMembers(): Promise<void> {
+  try {
+    const res = await plugin.request('kerjan.members', {})
+    if (res?.members) {
+      set(membersAtom, res.members)
+    }
+  } catch {
+    // Best-effort
+  }
+}
+
+async function loadEpics(productId?: number | null): Promise<void> {
+  set(epicsLoadingAtom, true)
+  try {
+    const res = await plugin.request('kerjan.epics', productId ? { productId } : undefined)
+    if (res?.epics) {
+      set(epicsAtom, res.epics)
+      const currentEpicId = read(addStoryEpicIdAtom)
+      if (
+        res.epics.length > 0 &&
+        (!currentEpicId || !res.epics.some((e) => e.id === currentEpicId))
+      ) {
+        set(addStoryEpicIdAtom, res.epics[0].id)
+      }
+    }
+  } catch {
+    // Best-effort
+  } finally {
+    set(epicsLoadingAtom, false)
+  }
+}
+
+async function submitCreateStory(): Promise<void> {
+  const epicId = read(addStoryEpicIdAtom)
+  const title = read(addStoryTitleAtom).trim()
+  const description = read(addStoryDescAtom).trim()
+  const sprintId = read(addStorySprintIdAtom)
+
+  if (!epicId || !title) {
+    set(feedbackAtom, {
+      tone: 'warning',
+      title: 'Incomplete Story Details',
+      message: 'Please select an Epic and enter a Story title.'
+    })
+    return
+  }
+
+  set(busyActionAtom, 'createStory')
+  set(feedbackAtom, null)
+  try {
+    const res = await plugin.request('kerjan.createStory', {
+      epicId,
+      title,
+      description: description || undefined,
+      sprintId: sprintId ?? null
+    })
+    if (!res.ok) {
+      set(feedbackAtom, {
+        tone: 'danger',
+        title: 'Story Creation Failed',
+        message: res.error || 'Failed to create story. Check account permissions.'
+      })
+      return
+    }
+
+    set(feedbackAtom, {
+      tone: 'success',
+      title: 'Story Created',
+      message: res.key ? `Created story ${res.key} successfully.` : 'Created story successfully.'
+    })
+    set(showAddStoryAtom, false)
+    set(addStoryTitleAtom, '')
+    set(addStoryDescAtom, '')
+
+    const currentMode = read(viewModeAtom)
+    if (currentMode === 'sprints') {
+      const sprintIdToRefresh = read(selectedSprintIdAtom)
+      if (sprintIdToRefresh) void loadSprintTickets(sprintIdToRefresh)
+    } else if (currentMode === 'backlog') {
+      void loadBacklogTickets(read(selectedProductIdAtom))
+    }
+  } catch (err) {
+    set(feedbackAtom, {
+      tone: 'danger',
+      title: 'Story Creation Failed',
+      message: err instanceof Error ? err.message : String(err)
+    })
+  } finally {
+    set(busyActionAtom, null)
+  }
+}
+
+async function submitAddTask(storyKey: string): Promise<void> {
+  const type = read(addTaskTypeAtom) || 'dev'
+  const title = read(addTaskTitleAtom).trim()
+  const rawEstimate = read(addTaskEstimateAtom).trim()
+  const estimate = rawEstimate ? parseFloat(rawEstimate) : null
+  const assigneeId = read(addTaskAssigneeIdAtom)
+  const description = read(addTaskDescAtom).trim()
+
+  if (!title) {
+    set(feedbackAtom, {
+      tone: 'warning',
+      title: 'Missing Task Title',
+      message: 'Please enter a title for the task.'
+    })
+    return
+  }
+
+  set(busyActionAtom, 'addTask')
+  set(feedbackAtom, null)
+  try {
+    const res = await plugin.request('kerjan.addTask', {
+      storyKey,
+      type,
+      title,
+      estimate: estimate && !Number.isNaN(estimate) ? estimate : null,
+      assigneeId: assigneeId ?? null,
+      description: description || undefined
+    })
+    if (!res.ok) {
+      set(feedbackAtom, {
+        tone: 'danger',
+        title: 'Failed to Add Task',
+        message: res.error || 'Could not add task. Check account permissions.'
+      })
+      return
+    }
+
+    set(feedbackAtom, {
+      tone: 'success',
+      title: 'Task Added',
+      message: res.key ? `Created task ${res.key} under ${storyKey}.` : `Task added to ${storyKey}.`
+    })
+    set(showAddTaskAtom, false)
+    set(addTaskTitleAtom, '')
+    set(addTaskDescAtom, '')
+    set(addTaskEstimateAtom, '')
+
+    const selTicket = read(selectedTicketAtom)
+    if (selTicket) {
+      void openTicketDetail(selTicket)
+    }
+  } catch (err) {
+    set(feedbackAtom, {
+      tone: 'danger',
+      title: 'Failed to Add Task',
+      message: err instanceof Error ? err.message : String(err)
+    })
+  } finally {
+    set(busyActionAtom, null)
+  }
+}
+
+function startEditingTask(ticket: KerjanTicket): void {
+  set(editTaskTitleAtom, ticket.title)
+  set(editTaskDescAtom, ticket.description ?? '')
+  set(editTaskEstimateAtom, ticket.estimate != null ? String(ticket.estimate) : '')
+  set(editTaskAssigneeIdAtom, ticket.assignee_id ?? null)
+  set(isEditingTaskAtom, true)
+  if (read(membersAtom).length === 0) void loadMembers()
+}
+
+async function submitUpdateTask(key: string): Promise<void> {
+  const title = read(editTaskTitleAtom).trim()
+  const description = read(editTaskDescAtom).trim()
+  const rawEst = read(editTaskEstimateAtom).trim()
+  const estimate = rawEst ? parseFloat(rawEst) : null
+  const assigneeId = read(editTaskAssigneeIdAtom)
+
+  if (!title) {
+    set(feedbackAtom, {
+      tone: 'warning',
+      title: 'Missing Title',
+      message: 'Task title cannot be empty.'
+    })
+    return
+  }
+
+  set(busyActionAtom, 'updateTask')
+  set(feedbackAtom, null)
+  try {
+    const res = await plugin.request('kerjan.updateTask', {
+      key,
+      title,
+      description,
+      estimate: estimate && !Number.isNaN(estimate) ? estimate : null,
+      assigneeId: assigneeId ?? null
+    })
+    if (!res.ok) {
+      set(feedbackAtom, {
+        tone: 'danger',
+        title: 'Update Failed',
+        message: res.error || 'Failed to update task. Check account permissions.'
+      })
+      return
+    }
+
+    set(feedbackAtom, {
+      tone: 'success',
+      title: 'Task Updated',
+      message: `Task ${key} updated successfully.`
+    })
+    set(isEditingTaskAtom, false)
+
+    const selTicket = read(selectedTicketAtom)
+    if (selTicket) {
+      void openTicketDetail(selTicket)
+    }
+  } catch (err) {
+    set(feedbackAtom, {
+      tone: 'danger',
+      title: 'Update Failed',
+      message: err instanceof Error ? err.message : String(err)
+    })
+  } finally {
+    set(busyActionAtom, null)
   }
 }
 
@@ -694,6 +942,83 @@ function TicketListView({
   )
 }
 
+function AddStoryCard({
+  epics,
+  epicsLoading,
+  sprintName,
+  busyAction
+}: {
+  epics: readonly KerjanEpicItem[]
+  epicsLoading: boolean
+  sprintName?: string
+  busyAction: string | null
+}) {
+  const epicOptions =
+    epics.length > 0
+      ? epics.map((e) => ({ value: String(e.id), label: `${e.key} · ${e.title}` }))
+      : [{ value: '0', label: epicsLoading ? 'Loading epics...' : 'No epics available', disabled: true }]
+
+  const activeEpicId = read(addStoryEpicIdAtom)
+  const currentEpicVal =
+    activeEpicId && epics.some((e) => e.id === activeEpicId)
+      ? String(activeEpicId)
+      : epics[0]
+        ? String(epics[0].id)
+        : '0'
+
+  return (
+    <Card
+      title="Create Story"
+      description={sprintName ? `Add a new story under ${sprintName}` : 'Add a new story to Backlog'}
+    >
+      <Stack gap="xs">
+        <Select
+          label="Target Epic"
+          options={epicOptions}
+          value={currentEpicVal}
+          disabled={epicsLoading || epics.length === 0}
+          onChange={(val) => set(addStoryEpicIdAtom, Number(val))}
+        />
+        <Input
+          label="Story Title"
+          placeholder="e.g. Implement user profile management"
+          value={read(addStoryTitleAtom)}
+          onChange={(val) => set(addStoryTitleAtom, val)}
+        />
+        <Textarea
+          label="Description (Optional)"
+          placeholder="Story criteria or user requirements..."
+          rows={3}
+          value={read(addStoryDescAtom)}
+          onChange={(val) => set(addStoryDescAtom, val)}
+        />
+        <Row gap="xs">
+          <Button
+            size="xs"
+            tone="accent"
+            icon="add"
+            disabled={
+              busyAction === 'createStory' ||
+              !read(addStoryTitleAtom).trim() ||
+              epics.length === 0
+            }
+            onPress={() => void submitCreateStory()}
+          >
+            {busyAction === 'createStory' ? 'Creating Story...' : 'Create Story'}
+          </Button>
+          <Button
+            size="xs"
+            variant="ghost"
+            onPress={() => set(showAddStoryAtom, false)}
+          >
+            Cancel
+          </Button>
+        </Row>
+      </Stack>
+    </Card>
+  )
+}
+
 function SprintView({
   sprints,
   selectedSprintId,
@@ -703,7 +1028,11 @@ function SprintView({
   query,
   onlyMine,
   assigneeId,
-  busyAction
+  busyAction,
+  epics,
+  epicsLoading,
+  showAddStory,
+  addStorySprintId
 }: {
   sprints: readonly KerjanSprintItem[]
   selectedSprintId: number | null
@@ -714,6 +1043,10 @@ function SprintView({
   onlyMine: boolean
   assigneeId: number
   busyAction: string | null
+  epics: readonly KerjanEpicItem[]
+  epicsLoading: boolean
+  showAddStory: boolean
+  addStorySprintId: number | null
 }) {
   if (sprints.length === 0) {
     return (
@@ -844,6 +1177,31 @@ function SprintView({
         onChange={(checked) => set(sprintOnlyMineAtom, checked)}
       />
 
+      <Row justify="between" align="center">
+        <Button
+          size="xs"
+          variant="outline"
+          icon="add"
+          onPress={() => {
+            const nextShow = !showAddStory || addStorySprintId !== activeSprint.id
+            set(showAddStoryAtom, nextShow)
+            set(addStorySprintIdAtom, activeSprint.id)
+            if (nextShow && epics.length === 0) void loadEpics()
+          }}
+        >
+          {showAddStory && addStorySprintId === activeSprint.id ? 'Close Add Story' : 'Add Story'}
+        </Button>
+      </Row>
+
+      {showAddStory && addStorySprintId === activeSprint.id ? (
+        <AddStoryCard
+          epics={epics}
+          epicsLoading={epicsLoading}
+          sprintName={activeSprint.name}
+          busyAction={busyAction}
+        />
+      ) : null}
+
       {error ? (
         <Callout tone="warning" title="Failed to load sprint" icon="warning">
           {error}
@@ -936,7 +1294,12 @@ function BacklogView({
   stories,
   loading,
   error,
-  query
+  query,
+  busyAction,
+  epics,
+  epicsLoading,
+  showAddStory,
+  addStorySprintId
 }: {
   products: readonly KerjanProductItem[]
   selectedProductId: number
@@ -944,6 +1307,11 @@ function BacklogView({
   loading: boolean
   error: string | null
   query: string
+  busyAction: string | null
+  epics: readonly KerjanEpicItem[]
+  epicsLoading: boolean
+  showAddStory: boolean
+  addStorySprintId: number | null
 }) {
   const productMap = new Map<number, string>()
   for (const p of products) {
@@ -985,6 +1353,30 @@ function BacklogView({
           Unscheduled stories
         </Text>
       </Row>
+
+      <Row justify="between" align="center">
+        <Button
+          size="xs"
+          variant="outline"
+          icon="add"
+          onPress={() => {
+            const nextShow = !showAddStory || addStorySprintId !== null
+            set(showAddStoryAtom, nextShow)
+            set(addStorySprintIdAtom, null)
+            if (nextShow && epics.length === 0) void loadEpics(selectedProductId || undefined)
+          }}
+        >
+          {showAddStory && addStorySprintId === null ? 'Close Add Story' : 'Add Story'}
+        </Button>
+      </Row>
+
+      {showAddStory && addStorySprintId === null ? (
+        <AddStoryCard
+          epics={epics}
+          epicsLoading={epicsLoading}
+          busyAction={busyAction}
+        />
+      ) : null}
 
       <Input
         label="Search backlog"
@@ -1063,7 +1455,10 @@ function TicketDetailView({
   projects,
   selectedProjectId,
   commentDraft,
-  busyAction
+  busyAction,
+  members,
+  showAddTask,
+  isEditingTask
 }: {
   ticket: KerjanTicket
   detail: KerjanTicketDetail | null
@@ -1072,6 +1467,9 @@ function TicketDetailView({
   selectedProjectId: string
   commentDraft: string
   busyAction: string | null
+  members: readonly KerjanMemberItem[]
+  showAddTask: boolean
+  isEditingTask: boolean
 }) {
   const activeTicket = detail?.ticket ?? ticket
   const isBusy = busyAction !== null
@@ -1185,6 +1583,20 @@ function TicketDetailView({
                 Move to To Do
               </Button>
             ) : null}
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={isBusy}
+              onPress={() => {
+                if (isEditingTask) {
+                  set(isEditingTaskAtom, false)
+                } else {
+                  startEditingTask(activeTicket)
+                }
+              }}
+            >
+              {isEditingTask ? 'Cancel Edit' : 'Edit Task'}
+            </Button>
           </Row>
         ) : (
           <Text muted size="xs">
@@ -1192,6 +1604,143 @@ function TicketDetailView({
           </Text>
         )}
       </Box>
+
+      {isEditingTask ? (
+        <Card
+          title={`Edit ${activeTicket.key}`}
+          description="Update task title, estimate, assignee, and description."
+        >
+          <Stack gap="xs">
+            <Input
+              label="Task Title"
+              value={read(editTaskTitleAtom)}
+              onChange={(val) => set(editTaskTitleAtom, val)}
+            />
+            <Input
+              label="Estimate (Hours)"
+              placeholder="e.g. 4"
+              value={read(editTaskEstimateAtom)}
+              onChange={(val) => set(editTaskEstimateAtom, val)}
+            />
+            <Select
+              label="Assignee"
+              options={[
+                { value: '0', label: 'Unassigned' },
+                ...members.map((m) => ({ value: String(m.id), label: m.name }))
+              ]}
+              value={String(read(editTaskAssigneeIdAtom) ?? 0)}
+              onChange={(val) => set(editTaskAssigneeIdAtom, val === '0' ? null : Number(val))}
+            />
+            <Textarea
+              label="Description"
+              placeholder="Task description..."
+              rows={4}
+              value={read(editTaskDescAtom)}
+              onChange={(val) => set(editTaskDescAtom, val)}
+            />
+            <Row gap="xs">
+              <Button
+                size="xs"
+                tone="accent"
+                icon="check"
+                disabled={busyAction === 'updateTask' || !read(editTaskTitleAtom).trim()}
+                onPress={() => void submitUpdateTask(activeTicket.key)}
+              >
+                {busyAction === 'updateTask' ? 'Saving...' : 'Save Changes'}
+              </Button>
+              <Button
+                size="xs"
+                variant="ghost"
+                onPress={() => set(isEditingTaskAtom, false)}
+              >
+                Cancel
+              </Button>
+            </Row>
+          </Stack>
+        </Card>
+      ) : null}
+
+      {activeTicket.kind === 'story' ? (
+        <Card
+          title="Add Task to Story"
+          description={`Create a new task under ${activeTicket.key}.`}
+        >
+          <Stack gap="xs">
+            {!showAddTask ? (
+              <Button
+                size="xs"
+                variant="outline"
+                icon="add"
+                onPress={() => {
+                  set(showAddTaskAtom, true)
+                  if (members.length === 0) void loadMembers()
+                }}
+              >
+                Add Task
+              </Button>
+            ) : (
+              <Stack gap="xs">
+                <Select
+                  label="Task Type"
+                  options={[
+                    { value: 'dev', label: 'Development (dev)' },
+                    { value: 'qa', label: 'Quality Assurance (qa)' },
+                    { value: 'bug', label: 'Bug / Defect (bug)' }
+                  ]}
+                  value={read(addTaskTypeAtom)}
+                  onChange={(val) => set(addTaskTypeAtom, val)}
+                />
+                <Input
+                  label="Task Title"
+                  placeholder="e.g. Implement API endpoint"
+                  value={read(addTaskTitleAtom)}
+                  onChange={(val) => set(addTaskTitleAtom, val)}
+                />
+                <Input
+                  label="Estimate (Hours)"
+                  placeholder="e.g. 4"
+                  value={read(addTaskEstimateAtom)}
+                  onChange={(val) => set(addTaskEstimateAtom, val)}
+                />
+                <Select
+                  label="Assignee"
+                  options={[
+                    { value: '0', label: 'Unassigned' },
+                    ...members.map((m) => ({ value: String(m.id), label: m.name }))
+                  ]}
+                  value={String(read(addTaskAssigneeIdAtom) ?? currentUserId ?? 0)}
+                  onChange={(val) => set(addTaskAssigneeIdAtom, val === '0' ? null : Number(val))}
+                />
+                <Textarea
+                  label="Description (Optional)"
+                  placeholder="Task instructions or requirements..."
+                  rows={3}
+                  value={read(addTaskDescAtom)}
+                  onChange={(val) => set(addTaskDescAtom, val)}
+                />
+                <Row gap="xs">
+                  <Button
+                    size="xs"
+                    tone="accent"
+                    icon="add"
+                    disabled={busyAction === 'addTask' || !read(addTaskTitleAtom).trim()}
+                    onPress={() => void submitAddTask(activeTicket.key)}
+                  >
+                    {busyAction === 'addTask' ? 'Adding Task...' : 'Create Task'}
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onPress={() => set(showAddTaskAtom, false)}
+                  >
+                    Cancel
+                  </Button>
+                </Row>
+              </Stack>
+            )}
+          </Stack>
+        </Card>
+      ) : null}
 
       {storyTasks.length > 0 ? (
         <Collapsible
@@ -1497,6 +2046,14 @@ export default function Panel() {
   const configUrl = read(configUrlAtom)
   const configToken = read(configTokenAtom)
 
+  const members = read(membersAtom)
+  const epics = read(epicsAtom)
+  const epicsLoading = read(epicsLoadingAtom)
+  const showAddStory = read(showAddStoryAtom)
+  const addStorySprintId = read(addStorySprintIdAtom)
+  const showAddTask = read(showAddTaskAtom)
+  const isEditingTask = read(isEditingTaskAtom)
+
   const isInitialLoading = loading && data === null
   const isSettingsOpen = showSettings || Boolean(data?.needsSetup)
   const showDashboardChrome = data !== null && !data.needsSetup && !isSettingsOpen
@@ -1651,6 +2208,9 @@ export default function Panel() {
           selectedProjectId={selectedProjectId}
           commentDraft={commentDraft}
           busyAction={busyAction}
+          members={members}
+          showAddTask={showAddTask}
+          isEditingTask={isEditingTask}
         />
       ) : viewMode === 'sprints' ? (
         <SprintView
@@ -1663,6 +2223,10 @@ export default function Panel() {
           onlyMine={onlyMine}
           assigneeId={data?.assigneeId ?? 0}
           busyAction={busyAction}
+          epics={epics}
+          epicsLoading={epicsLoading}
+          showAddStory={showAddStory}
+          addStorySprintId={addStorySprintId}
         />
       ) : viewMode === 'backlog' ? (
         <BacklogView
@@ -1672,6 +2236,11 @@ export default function Panel() {
           loading={backlogLoading}
           error={backlogError}
           query={backlogQuery}
+          busyAction={busyAction}
+          epics={epics}
+          epicsLoading={epicsLoading}
+          showAddStory={showAddStory}
+          addStorySprintId={addStorySprintId}
         />
       ) : (
         <Stack gap="sm">

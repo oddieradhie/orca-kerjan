@@ -62,6 +62,18 @@ export type KerjanProductItem = {
   name: string
 }
 
+export type KerjanEpicItem = {
+  id: number
+  key: string
+  title: string
+  product_id?: number | null
+}
+
+export type KerjanMemberItem = {
+  id: number
+  name: string
+}
+
 export type KerjanStoryItem = KerjanTicket & {
   product_id?: number | null
   product_name?: string
@@ -155,6 +167,44 @@ declare module 'orca' {
         hostId?: string | null
       }
       output: { ok: boolean; workspaceId?: string; branch?: string; error?: string }
+    }
+    'kerjan.epics': {
+      input: { productId?: number | null } | undefined
+      output: { epics: KerjanEpicItem[]; error?: string }
+    }
+    'kerjan.members': {
+      input: Record<string, never> | undefined
+      output: { members: KerjanMemberItem[]; error?: string }
+    }
+    'kerjan.createStory': {
+      input: {
+        epicId: number
+        title: string
+        description?: string
+        sprintId?: number | null
+      }
+      output: { ok: boolean; key?: string; error?: string }
+    }
+    'kerjan.addTask': {
+      input: {
+        storyKey: string
+        type: string
+        title: string
+        estimate?: number | null
+        assigneeId?: number | null
+        description?: string
+      }
+      output: { ok: boolean; key?: string; error?: string }
+    }
+    'kerjan.updateTask': {
+      input: {
+        key: string
+        title?: string
+        description?: string
+        estimate?: number | null
+        assigneeId?: number | null
+      }
+      output: { ok: boolean; error?: string }
     }
   }
   interface PluginPanelEvents {
