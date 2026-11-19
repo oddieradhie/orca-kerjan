@@ -1,0 +1,72 @@
+{
+  "$schema": "https://orca.stably.ai/schemas/orca-plugin.v2.json",
+  "manifestVersion": 2,
+  "id": "kerjan",
+  "name": "Kerjan",
+  "version": "1.0.0",
+  "description": "Kerjan issue tracker sidebar panel, status bar counter, ticket updates, and worktree creation for Orca.",
+  "author": {
+    "name": "Fathur Radhie"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/oddieradhie/orca-kerjan",
+  "icon": "assets/kerjan-logo.png",
+  "execution": "trusted-worker",
+  "engines": {
+    "orca": ">=1.4.259"
+  },
+  "main": "src/worker.ts",
+  "capabilities": [
+    { "kind": "secrets:own" },
+    { "kind": "settings:own" },
+    { "kind": "storage:own" },
+    { "kind": "workspace:read" },
+    { "kind": "workspace:write" },
+    { "kind": "workspace:create" },
+    { "kind": "notifications:show" }
+  ],
+  "contributes": {
+    "panels": [
+      {
+        "id": "kerjan",
+        "title": "Kerjan",
+        "icon": "layers",
+        "entry": "src/panel.tsx",
+        "ui": "components"
+      }
+    ],
+    "statusBarItems": [
+      {
+        "id": "kerjan-status",
+        "text": "Kerjan",
+        "icon": "layers",
+        "tone": "neutral",
+        "tooltip": "Kerjan active tickets",
+        "command": "kerjan.refresh"
+      }
+    ],
+    "commands": [
+      {
+        "id": "kerjan.refresh",
+        "title": "Kerjan: Refresh Tickets",
+        "when": "global"
+      }
+    ],
+    "settings": [
+      {
+        "key": "apiUrl",
+        "title": "Kerjan MCP URL",
+        "description": "Kerjan MCP JSON-RPC endpoint URL.",
+        "type": "string",
+        "default": ""
+      },
+      {
+        "key": "apiToken",
+        "title": "Kerjan API Token",
+        "description": "Bearer token for Kerjan MCP authentication (stored encrypted via secrets:own when configured in panel).",
+        "type": "string",
+        "default": ""
+      }
+    ]
+  }
+}
