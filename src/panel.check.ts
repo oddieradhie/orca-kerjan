@@ -3,32 +3,32 @@ import { defineCheck } from 'orca/testing'
 const mockSprints = [
   {
     id: 107,
-    name: 'CRM - CPAAS - SPRINT 7',
+    name: 'Sprint 1 - Core Platform',
     state: 'active',
     category: 'development',
     start_date: '2026-11-03T02:00:00Z',
     end_date: '2026-11-24T02:00:00Z',
-    goal: 'Menghadirkan AI Report Generator dan integrasi PDS.'
+    goal: 'Deliver OAuth2 authentication and core API improvements.'
   }
 ]
 
-const mockProducts = [{ id: 24, name: 'CPaaS - Omnix PBX' }]
+const mockProducts = [{ id: 24, name: 'Core Platform' }]
 
 const mockSprintStories = [
   {
     id: 6559,
     key: 'PRD-2407',
     kind: 'story',
-    title: 'Integrasi OmniX PBX untuk PDS di Omnix Sales',
+    title: 'User Authentication Flow',
     status: 'in_progress',
     sprint_id: 107,
-    estimate: 108,
+    estimate: 24,
     tasks: [
       {
         id: 6628,
         key: 'PRD-2476',
         kind: 'task',
-        title: '[BE] [E2E] E2E dev full flow PDS',
+        title: '[BE] Implement OAuth2 token refresh',
         status: 'todo',
         task_type: 'dev',
         assignee_id: 35,
@@ -108,12 +108,12 @@ export default defineCheck({
             id: 6628,
             key: 'PRD-2476',
             kind: 'task',
-            title: '[BE] [E2E] E2E dev full flow PDS',
+            title: '[BE] Implement OAuth2 token refresh',
             status: 'in_progress',
             sprint_id: 107,
-            sprint_name: 'CRM - CPAAS - SPRINT 7',
+            sprint_name: 'Sprint 1 - Core Platform',
             story_key: 'PRD-2407',
-            story_title: 'Integrasi OmniX PBX untuk PDS',
+            story_title: 'User Authentication Flow',
             task_type: 'dev',
             estimate: 5
           },
@@ -121,10 +121,10 @@ export default defineCheck({
             id: 6646,
             key: 'PRD-2494',
             kind: 'task',
-            title: '[FE] [internal-app] Softphone screen-pop',
+            title: '[FE] Add login session timeout dialog',
             status: 'todo',
             sprint_id: 107,
-            sprint_name: 'CRM - CPAAS - SPRINT 7',
+            sprint_name: 'Sprint 1 - Core Platform',
             story_key: 'PRD-2407',
             task_type: 'dev',
             estimate: 3
@@ -132,10 +132,10 @@ export default defineCheck({
         ],
         projects: [
           {
-            id: 'git:github.com/example/cpaas-voice',
-            name: 'cpaas-voice',
+            id: 'git:github.com/example/core-api',
+            name: 'core-api',
             hostId: 'local',
-            path: '/tmp/cpaas-voice'
+            path: '/tmp/core-api'
           }
         ],
         sprints: mockSprints,

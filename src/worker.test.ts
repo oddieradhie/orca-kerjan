@@ -22,19 +22,19 @@ test('creates a worktree from a Kerjan ticket without refusals', async () => {
   activeWorker = await mountWorker(main, { host })
   const res = await activeWorker.request('kerjan.createWorktree', {
     ticketKey: 'PRD-2476',
-    ticketTitle: '[BE] [E2E] E2E dev full flow PDS!',
-    projectId: 'git:github.com/example/cpaas-voice',
+    ticketTitle: '[BE] Implement OAuth2 token refresh!',
+    projectId: 'git:github.com/example/core-api',
     hostId: 'local'
   })
 
   assert.equal(res.ok, true)
   assert.equal(res.workspaceId, 'repo-1::/tmp/wt-prd-2476')
-  assert.equal(res.branch, 'feature/prd-2476-be-e2e-e2e-dev-full-flow-pds')
+  assert.equal(res.branch, 'feature/prd-2476-be-implement-oauth2-token-refres')
   assert.deepEqual(host.callsOf('workspace.create'), [
     {
-      projectId: 'git:github.com/example/cpaas-voice',
+      projectId: 'git:github.com/example/core-api',
       hostId: 'local',
-      name: 'feature/prd-2476-be-e2e-e2e-dev-full-flow-pds',
+      name: 'feature/prd-2476-be-implement-oauth2-token-refres',
       open: true
     }
   ])
@@ -62,7 +62,7 @@ test('fetches dashboard, sprints, products, sprintTickets, and backlogTickets cl
           id: 6559,
           key: 'PRD-2407',
           kind: 'story',
-          title: 'Integrasi OmniX PBX',
+          title: 'User Authentication Flow',
           status: 'in_progress',
           sprint_id: 107,
           canceled_at: null,
@@ -71,7 +71,7 @@ test('fetches dashboard, sprints, products, sprintTickets, and backlogTickets cl
               id: 6628,
               key: 'PRD-2476',
               kind: 'task',
-              title: '[BE] E2E PDS',
+              title: '[BE] Implement OAuth2 token refresh',
               status: 'todo',
               canceled_at: null
             },
@@ -123,7 +123,7 @@ test('fetches dashboard, sprints, products, sprintTickets, and backlogTickets cl
           id: 6628,
           key: 'PRD-2476',
           kind: 'task',
-          title: '[BE] E2E PDS',
+          title: '[BE] Implement OAuth2 token refresh',
           status: 'todo',
           sprint_id: 107,
           canceled_at: null
@@ -141,17 +141,17 @@ test('fetches dashboard, sprints, products, sprintTickets, and backlogTickets cl
     } else if (toolName === 'list_workspaces') {
       payload = [{ id: 1, code: 'PRD', name: 'Product Development' }]
     } else if (toolName === 'whoami') {
-      payload = { id: 35, name: 'Fathur Radhie' }
+      payload = { id: 35, name: 'Demo User' }
     } else if (toolName === 'list_sprints') {
       payload = [
-        { id: 95, name: 'CRM - CPAAS - SPRINT 6', state: 'closed' },
-        { id: 111, name: 'Remediasi Pentest', state: 'active' },
-        { id: 107, name: 'CRM - CPAAS - SPRINT 7', state: 'active' }
+        { id: 95, name: 'Sprint 0 - Legacy Cleanup', state: 'closed' },
+        { id: 111, name: 'Sprint 2 - Security Hardening', state: 'active' },
+        { id: 107, name: 'Sprint 1 - Core Platform', state: 'active' }
       ]
     } else if (toolName === 'list_products') {
       payload = [
-        { id: 22, name: 'OmniX' },
-        { id: 24, name: 'CPaaS - Omnix PBX' }
+        { id: 22, name: 'Web App' },
+        { id: 24, name: 'Core Platform' }
       ]
     }
 
@@ -176,11 +176,11 @@ test('fetches dashboard, sprints, products, sprintTickets, and backlogTickets cl
       'project.list': {
         projects: [
           {
-            id: 'git:github.com/example/cpaas-voice',
-            name: 'cpaas-voice',
+            id: 'git:github.com/example/core-api',
+            name: 'core-api',
             kind: 'git',
             hostId: 'local',
-            path: '/tmp/cpaas-voice'
+            path: '/tmp/core-api'
           }
         ],
         truncated: false
@@ -194,7 +194,7 @@ test('fetches dashboard, sprints, products, sprintTickets, and backlogTickets cl
   const data = await activeWorker.request('kerjan.dashboard', { force: true })
   assert.equal(data.tickets.length, 1)
   assert.equal(data.tickets[0].key, 'PRD-2476')
-  assert.equal(data.tickets[0].sprint_name, 'CRM - CPAAS - SPRINT 7')
+  assert.equal(data.tickets[0].sprint_name, 'Sprint 1 - Core Platform')
   assert.equal(data.defaultSprintId, 107)
   assert.equal(data.defaultProductId, 24)
   assert.equal(data.sprints?.length, 3)
@@ -242,7 +242,7 @@ test('returns needsSetup when unconfigured and persists credentials cleanly via 
 
     let payload: unknown = []
     if (toolName === 'whoami') {
-      payload = { id: 35, name: 'Fathur Radhie' }
+      payload = { id: 35, name: 'Demo User' }
     } else if (toolName === 'list_workspaces') {
       payload = [{ id: 1, code: 'PRD', name: 'Product Development' }]
     } else if (toolName === 'list_tickets') {
@@ -251,18 +251,18 @@ test('returns needsSetup when unconfigured and persists credentials cleanly via 
           id: 6628,
           key: 'PRD-2476',
           kind: 'task',
-          title: '[BE] E2E PDS',
+          title: '[BE] Implement OAuth2 token refresh',
           status: 'in_progress',
           sprint_id: 107,
           canceled_at: null
         }
       ]
     } else if (toolName === 'list_sprints') {
-      payload = [{ id: 107, name: 'CRM - CPAAS - SPRINT 7', state: 'active' }]
+      payload = [{ id: 107, name: 'Sprint 1 - Core Platform', state: 'active' }]
     } else if (toolName === 'list_products') {
-      payload = [{ id: 24, name: 'CPaaS - Omnix PBX' }]
+      payload = [{ id: 24, name: 'Core Platform' }]
     } else if (toolName === 'list_members') {
-      payload = [{ id: 35, name: 'Fathur Radhie' }]
+      payload = [{ id: 35, name: 'Demo User' }]
     }
 
     return new Response(
@@ -297,7 +297,7 @@ test('returns needsSetup when unconfigured and persists credentials cleanly via 
   })
 
   assert.equal(saveRes.ok, true)
-  assert.equal(saveRes.userName, 'Fathur Radhie')
+  assert.equal(saveRes.userName, 'Demo User')
   assert.equal(saveRes.userId, 35)
   assert.equal(saveRes.dashboard?.needsSetup, false)
   assert.equal(saveRes.dashboard?.config?.hasToken, true)
