@@ -117,6 +117,11 @@ function sprintStateTone(state: string): Tone {
   return 'neutral'
 }
 
+function assigneeTone(ticketAssigneeId?: number | null, currentUserId = 0): Tone {
+  if (currentUserId > 0 && ticketAssigneeId === currentUserId) return 'accent'
+  return 'neutral'
+}
+
 function statusLabel(status: string): string {
   if (status === 'in_progress') return 'In Progress'
   if (status === 'todo') return 'To Do'
@@ -567,6 +572,7 @@ function TicketCard({
 }) {
   const tone = statusTone(ticket.status)
   const isBusy = busyAction !== null
+  const currentUserId = read(dashboardAtom)?.assigneeId ?? 0
 
   return (
     <Box border={true} background="card" radius="md" padding="sm" gap="xs">
@@ -590,7 +596,9 @@ function TicketCard({
             <Badge tone="neutral">{`${ticket.estimate}h`}</Badge>
           ) : null}
           {showAssignee && ticket.assignee_name ? (
-            <Badge tone="neutral">{ticket.assignee_name}</Badge>
+            <Badge tone={assigneeTone(ticket.assignee_id, currentUserId)}>
+              {ticket.assignee_name}
+            </Badge>
           ) : null}
         </Row>
         {showQuickActions && ticket.kind === 'task' && ticket.status === 'todo' ? (
@@ -1081,6 +1089,7 @@ function TicketDetailView({
     : '*No description provided for this ticket.*'
 
   const webOrigin = resolveWebOrigin(read(dashboardAtom)?.config?.apiUrl)
+  const currentUserId = read(dashboardAtom)?.assigneeId ?? 0
 
   return (
     <Stack gap="md">
@@ -1123,7 +1132,9 @@ function TicketDetailView({
               (activeTicket.sprint_id ? `Sprint #${activeTicket.sprint_id}` : 'Backlog')}
           </Badge>
           {activeTicket.assignee_name ? (
-            <Badge tone="neutral">{activeTicket.assignee_name}</Badge>
+            <Badge tone={assigneeTone(activeTicket.assignee_id, currentUserId)}>
+              {activeTicket.assignee_name}
+            </Badge>
           ) : null}
         </Row>
 
@@ -1216,7 +1227,9 @@ function TicketDetailView({
                     <Badge tone="neutral">{`${t.estimate}h`}</Badge>
                   ) : null}
                   {t.assignee_name ? (
-                    <Badge tone="neutral">{t.assignee_name}</Badge>
+                    <Badge tone={assigneeTone(t.assignee_id, currentUserId)}>
+                      {t.assignee_name}
+                    </Badge>
                   ) : null}
                 </Row>
                 <Text size="xs" weight="medium">
