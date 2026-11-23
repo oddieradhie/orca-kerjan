@@ -436,3 +436,54 @@ test('detects version updates correctly', () => {
   assert.equal(main.isNewerVersion('1.1.1', '1.1.2'), false)
   assert.equal(main.isNewerVersion('1.0.9', '1.1.2'), false)
 })
+
+test('resolves comment author_name from member list in kerjan.detail', async () => {
+  globalThis.fetch = (async (_url: unknown, init?: { body?: unknown }) => {
+    const body = JSON.parse(String(init?.body ?? '{}')) as {
+      params?: { name?: string }
+    }
+    const toolName = body.params?.name ?? ''
+    let payload: unknown = {}
+    if (toolName === 'get_ticket') {
+      payload = {
+        ticket: {
+          id: 6628,
+          key: 'PRD-2476',
+          kind: 'task',
+          title: 'Test ticket',
+          status: 'in_progress',
+          assignee_id: 35
+        },
+        comments: [
+          { id: 1, body: 'Hello', author_id: 35, created_at: '2026-11-23T01:00:00Z' },
+          { id: 2, body: 'World', author_id: 42, author_name: 'Existing Name' }
+        ]
+      }
+    } else if (toolName === 'list_members') {
+      payload = [
+        { id: 35, name: 'Alice Developer' },
+        { id: 42, name: 'Bob Tester' }
+      ]
+    }
+    return new Response(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        result: { content: [{ type: 'text', text: JSON.stringify(payload) }] }
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    )
+  }) as typeof fetch
+
+  activeWorker = await mountWorker(main, {
+    host: mockHost({
+      secrets: { apiToken: 'kjp_test' },
+      settings: { apiUrl: 'https://kerjan.example/mcp' }
+    })
+  })
+
+  const detail = await activeWorker.request('kerjan.detail', { key: 'PRD-2476' })
+  assert.equal(detail.ticket.assignee_name, 'Alice Developer')
+  assert.equal(detail.comments[0]?.author_name, 'Alice Developer')
+  assert.equal(detail.comments[1]?.author_name, 'Existing Name')
+})

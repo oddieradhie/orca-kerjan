@@ -1840,7 +1840,7 @@ function TicketDetailView({
                 {detail.comments.slice(-5).map((c, idx) => (
                   <Card
                     key={c.id ?? idx}
-                    title={c.author_name ?? `Member #${c.author_id ?? '-'}`}
+                    title={c.author_name || `Member #${c.author_id ?? '-'}`}
                     description={
                       c.created_at ? c.created_at.slice(0, 16).replace('T', ' ') : undefined
                     }

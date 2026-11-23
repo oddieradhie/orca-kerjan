@@ -17,7 +17,7 @@ import './protocol'
 
 const DEFAULT_API_URL = ''
 const DEFAULT_API_TOKEN = ''
-export const CURRENT_VERSION = '1.1.2'
+export const CURRENT_VERSION = '1.1.3'
 const GITHUB_MANIFEST_URL =
   'https://raw.githubusercontent.com/oddieradhie/orca-kerjan/main/orca-plugin.json'
 const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1000
@@ -361,6 +361,12 @@ function withAssigneeName<T extends KerjanTicket>(ticket: T, memberMap: Map<numb
   if (ticket.assignee_name || typeof ticket.assignee_id !== 'number') return ticket
   const name = memberMap.get(ticket.assignee_id)
   return name ? { ...ticket, assignee_name: name } : ticket
+}
+
+function withAuthorName(comment: KerjanComment, memberMap: Map<number, string>): KerjanComment {
+  if (comment.author_name || typeof comment.author_id !== 'number') return comment
+  const name = memberMap.get(comment.author_id)
+  return name ? { ...comment, author_name: name } : comment
 }
 
 async function getMemberMap(
@@ -836,7 +842,9 @@ export default function activate(orca: OrcaWorkerApi): void {
       return cleanJson({
         ticket: resolvedTicket,
         story: storySummary,
-        comments: Array.isArray(raw.comments) ? raw.comments : []
+        comments: Array.isArray(raw.comments)
+          ? raw.comments.map((c) => withAuthorName(c, memberMap))
+          : []
       })
     } catch (err) {
       const message = errorMessage(err)
