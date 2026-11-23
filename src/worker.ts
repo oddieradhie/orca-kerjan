@@ -17,12 +17,74 @@ import './protocol'
 
 const DEFAULT_API_URL = ''
 const DEFAULT_API_TOKEN = ''
+export const CURRENT_VERSION = '1.1.2'
+const GITHUB_MANIFEST_URL =
+  'https://raw.githubusercontent.com/oddieradhie/orca-kerjan/main/orca-plugin.json'
+const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1000
 const PREFERRED_PRODUCT_ID = 24
 const CACHE_KEY = 'cachedDashboard'
 const CONFIG_STORAGE_KEY = 'kerjanConfig'
 const SECRET_TOKEN_KEY = 'apiToken'
 const POLL_INTERVAL_MS = 5 * 60 * 1000
 const BACKLOG_LIMIT = 80
+
+export function parseSemver(v: string): [number, number, number] {
+  const cleaned = v.trim().replace(/^v/, '')
+  const parts = cleaned.split('.').map((p) => parseInt(p, 10) || 0)
+  return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0]
+}
+
+export function isNewerVersion(latest: string, current: string): boolean {
+  const [lMajor, lMinor, lPatch] = parseSemver(latest)
+  const [cMajor, cMinor, cPatch] = parseSemver(current)
+  if (lMajor > cMajor) return true
+  if (lMajor < cMajor) return false
+  if (lMinor > cMinor) return true
+  if (lMinor < cMinor) return false
+  return lPatch > cPatch
+}
+
+let cachedUpdateCheck: { hasUpdate: boolean; latestVersion?: string } | null = null
+let lastUpdateCheckAt = 0
+
+export async function checkLatestVersion(
+  signal?: AbortSignal,
+  force = false
+): Promise<{ hasUpdate: boolean; latestVersion?: string }> {
+  const now = Date.now()
+  if (!force && cachedUpdateCheck && now - lastUpdateCheckAt < UPDATE_CHECK_INTERVAL_MS) {
+    return cachedUpdateCheck
+  }
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 2500)
+  if (signal) {
+    signal.addEventListener('abort', () => controller.abort(), { once: true })
+  }
+
+  try {
+    const res = await fetch(GITHUB_MANIFEST_URL, {
+      signal: controller.signal,
+      headers: { Accept: 'application/json' }
+    })
+    if (res.ok) {
+      const data = (await res.json()) as { version?: string }
+      if (typeof data?.version === 'string' && data.version.trim()) {
+        const latestVersion = data.version.trim()
+        const hasUpdate = isNewerVersion(latestVersion, CURRENT_VERSION)
+        cachedUpdateCheck = { hasUpdate, latestVersion }
+        lastUpdateCheckAt = now
+        return cachedUpdateCheck
+      }
+    }
+  } catch {
+    // Non-critical network/timeout failure
+  } finally {
+    clearTimeout(timer)
+  }
+
+  return cachedUpdateCheck ?? { hasUpdate: false }
+}
 
 type KerjanConfig = {
   apiUrl: string
@@ -482,7 +544,8 @@ async function fetchDashboard(
       counts: { inProgress: 0, todo: 0, done: 0 },
       fetchedAt: Date.now(),
       needsSetup: true,
-      config: configSummary
+      config: configSummary,
+      currentVersion: CURRENT_VERSION
     }
     await updateStatusBar(orca, setupData)
     return cleanJson(setupData)
@@ -494,7 +557,7 @@ async function fetchDashboard(
     let detectedWorkspace = identity.workspaceCode
     const wsFilter = detectedWorkspace ? { workspace: detectedWorkspace } : {}
 
-    const [rawTickets, rawSprints, rawProducts, memberMap] = await Promise.all([
+    const [rawTickets, rawSprints, rawProducts, memberMap, updateInfo] = await Promise.all([
       callKerjanTool<KerjanTicket[] | { tickets?: KerjanTicket[] }>(
         config,
         'list_tickets',
@@ -503,7 +566,8 @@ async function fetchDashboard(
       ),
       callKerjanTool<unknown>(config, 'list_sprints', wsFilter, signal),
       callKerjanTool<unknown>(config, 'list_products', wsFilter, signal).catch(() => []),
-      getMemberMap(config, signal)
+      getMemberMap(config, signal),
+      checkLatestVersion(signal).catch(() => ({ hasUpdate: false }))
     ])
 
     const ticketArray = Array.isArray(rawTickets)
@@ -564,7 +628,10 @@ async function fetchDashboard(
       counts,
       fetchedAt: Date.now(),
       needsSetup: false,
-      config: configSummary
+      config: configSummary,
+      currentVersion: CURRENT_VERSION,
+      latestVersion: updateInfo?.latestVersion,
+      hasUpdate: updateInfo?.hasUpdate
     }
 
     try {
@@ -585,7 +652,8 @@ async function fetchDashboard(
           fromCache: true,
           needsSetup: false,
           config: configSummary,
-          error: message
+          error: message,
+          currentVersion: CURRENT_VERSION
         }
       : {
           tickets: [],
@@ -600,7 +668,8 @@ async function fetchDashboard(
           fetchedAt: Date.now(),
           needsSetup: false,
           config: configSummary,
-          error: message
+          error: message,
+          currentVersion: CURRENT_VERSION
         }
     await updateStatusBar(orca, fallback)
     return cleanJson(fallback)

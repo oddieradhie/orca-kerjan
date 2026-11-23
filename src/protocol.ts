@@ -120,6 +120,9 @@ export type KerjanDashboardData = {
   needsSetup?: boolean
   config?: KerjanClientConfigSummary
   error?: string
+  currentVersion?: string
+  latestVersion?: string
+  hasUpdate?: boolean
 }
 
 declare module 'orca' {

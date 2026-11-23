@@ -2076,13 +2076,32 @@ export default function Panel() {
             <Image src="assets/kerjan-logo.png" alt="Kerjan" size="full" fit="contain" rounded />
           </Box>
           <Heading level={2}>Kerjan</Heading>
-          {showDashboardChrome ? (
-            <Badge tone="accent">{data.workspaceCode}</Badge>
-          ) : null}
           {showDashboardChrome && data.fromCache ? <Badge tone="warning">Cached</Badge> : null}
         </Row>
         {showDashboardChrome ? (
           <Row gap="xs" align="center">
+            {data?.hasUpdate ? (
+              <Button
+                size="xs"
+                variant="solid"
+                tone="accent"
+                icon="open-external"
+                tooltip={`Update to v${data.latestVersion ?? ''} available`}
+                onPress={() => {
+                  set(feedbackAtom, {
+                    tone: 'accent',
+                    title: `Update Tersedia (v${data.latestVersion ?? 'baru'})`,
+                    message:
+                      'Untuk memperbarui plugin, jalankan di terminal:\norca plugin update kerjan\natau: orca plugin update github:oddieradhie/orca-kerjan'
+                  })
+                  void shell.openExternal(
+                    'https://github.com/oddieradhie/orca-kerjan/releases'
+                  )
+                }}
+              >
+                Update
+              </Button>
+            ) : null}
             <Button
               size="xs"
               variant="ghost"

@@ -48,6 +48,12 @@ test('fetches dashboard, sprints, products, sprintTickets, and backlogTickets cl
   const seenCalls: Array<{ name: string; args: Record<string, unknown> }> = []
 
   globalThis.fetch = (async (_url: unknown, init?: { body?: unknown }) => {
+    if (String(_url).includes('orca-plugin.json')) {
+      return {
+        ok: true,
+        json: async () => ({ version: '1.1.2' })
+      } as unknown as Response
+    }
     const body = JSON.parse(String(init?.body ?? '{}')) as {
       params?: { name?: string; arguments?: Record<string, unknown> }
     }
@@ -230,6 +236,12 @@ test('returns needsSetup when unconfigured and persists credentials cleanly via 
   const seenAuthHeaders: string[] = []
 
   globalThis.fetch = (async (_url: unknown, init?: { headers?: unknown; body?: unknown }) => {
+    if (String(_url).includes('orca-plugin.json')) {
+      return {
+        ok: true,
+        json: async () => ({ version: '1.1.2' })
+      } as unknown as Response
+    }
     fetchCalls += 1
     const headers = (init?.headers ?? {}) as Record<string, string>
     if (headers.Authorization) {
@@ -414,4 +426,13 @@ test('handles epics, members, createStory, addTask, and updateTask cleanly', asy
   assert.equal(updateRes.ok, true)
 
   assert.deepEqual(activeWorker.refusals, [])
+})
+
+test('detects version updates correctly', () => {
+  assert.equal(main.isNewerVersion('1.1.3', '1.1.2'), true)
+  assert.equal(main.isNewerVersion('1.2.0', '1.1.2'), true)
+  assert.equal(main.isNewerVersion('2.0.0', '1.1.2'), true)
+  assert.equal(main.isNewerVersion('1.1.2', '1.1.2'), false)
+  assert.equal(main.isNewerVersion('1.1.1', '1.1.2'), false)
+  assert.equal(main.isNewerVersion('1.0.9', '1.1.2'), false)
 })
