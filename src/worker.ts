@@ -58,6 +58,11 @@ function maskToken(token: string): string {
   return `${token.slice(0, 8)}••••${token.slice(-4)}`
 }
 
+function cleanJson<T>(value: T): T {
+  if (value === undefined) return null as unknown as T
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
 async function readConfig(orca: OrcaWorkerApi): Promise<KerjanConfig> {
   let rawSettings: Record<string, JsonValue> = {}
   let secretToken: string | null = null
@@ -480,7 +485,7 @@ async function fetchDashboard(
       config: configSummary
     }
     await updateStatusBar(orca, setupData)
-    return setupData
+    return cleanJson(setupData)
   }
 
   try {
@@ -568,7 +573,7 @@ async function fetchDashboard(
       // Cache persistence is best-effort and must not fail a successful fetch.
     }
     await updateStatusBar(orca, data)
-    return data
+    return cleanJson(data)
   } catch (err) {
     const message = errorMessage(err)
     orca.log(`Kerjan dashboard fetch failed: ${message}`)
@@ -598,13 +603,13 @@ async function fetchDashboard(
           error: message
         }
     await updateStatusBar(orca, fallback)
-    return fallback
+    return cleanJson(fallback)
   }
 }
 
 export default function activate(orca: OrcaWorkerApi): void {
   orca.panels.handle('kerjan.dashboard', async (_input, { signal }) => {
-    return fetchDashboard(orca, signal)
+    return cleanJson(await fetchDashboard(orca, signal))
   })
 
   orca.panels.handle('kerjan.saveConfig', async (input, { signal }) => {
@@ -670,12 +675,12 @@ export default function activate(orca: OrcaWorkerApi): void {
     const dashboard = await fetchDashboard(orca, signal)
     orca.panels.post('kerjan.refreshed', dashboard)
 
-    return {
+    return cleanJson({
       ok: true,
       userName: typeof me?.name === 'string' ? me.name : undefined,
       userId: typeof me?.id === 'number' ? me.id : undefined,
       dashboard
-    }
+    })
   })
 
   orca.panels.handle('kerjan.clearConfig', async (_input, { signal }) => {
@@ -711,7 +716,7 @@ export default function activate(orca: OrcaWorkerApi): void {
 
     const dashboard = await fetchDashboard(orca, signal)
     orca.panels.post('kerjan.refreshed', dashboard)
-    return { ok: true, dashboard }
+    return cleanJson({ ok: true, dashboard })
   })
 
   orca.panels.handle('kerjan.detail', async ({ key }, { signal }): Promise<KerjanTicketDetail> => {
@@ -759,20 +764,20 @@ export default function activate(orca: OrcaWorkerApi): void {
             }
           : null
 
-      return {
+      return cleanJson({
         ticket: resolvedTicket,
         story: storySummary,
         comments: Array.isArray(raw.comments) ? raw.comments : []
-      }
+      })
     } catch (err) {
       const message = errorMessage(err)
       orca.log(`Kerjan get_ticket(${key}) failed: ${message}`)
-      return {
+      return cleanJson({
         ticket: { id: 0, key, kind: 'task', title: key, status: 'unknown' },
         story: null,
         comments: [],
         error: message
-      }
+      })
     }
   })
 
@@ -788,18 +793,18 @@ export default function activate(orca: OrcaWorkerApi): void {
         ),
         getMemberMap(config, signal)
       ])
-      return {
+      return cleanJson({
         sprintId,
         stories: normalizeStories(raw, memberMap)
-      }
+      })
     } catch (err) {
       const message = errorMessage(err)
       orca.log(`Kerjan sprintTickets(${sprintId}) failed: ${message}`)
-      return {
+      return cleanJson({
         sprintId,
         stories: [],
         error: message
-      }
+      })
     }
   })
 
@@ -820,14 +825,14 @@ export default function activate(orca: OrcaWorkerApi): void {
         getMemberMap(config, signal)
       ])
       const stories = normalizeStories(raw, memberMap).slice(0, BACKLOG_LIMIT)
-      return { stories }
+      return cleanJson({ stories })
     } catch (err) {
       const message = errorMessage(err)
       orca.log(`Kerjan backlogTickets(${productId ?? 'all'}) failed: ${message}`)
-      return {
+      return cleanJson({
         stories: [],
         error: message
-      }
+      })
     }
   })
 
@@ -913,11 +918,11 @@ export default function activate(orca: OrcaWorkerApi): void {
         args.product_id = input.productId
       }
       const raw = await callKerjanTool<unknown>(config, 'list_tickets', args, signal)
-      return { epics: normalizeEpics(raw) }
+      return cleanJson({ epics: normalizeEpics(raw) })
     } catch (err) {
       const message = errorMessage(err)
       orca.log(`Kerjan list_tickets(epic) failed: ${message}`)
-      return { epics: [], error: message }
+      return cleanJson({ epics: [], error: message })
     }
   })
 
@@ -925,11 +930,11 @@ export default function activate(orca: OrcaWorkerApi): void {
     const config = await readConfig(orca)
     try {
       const raw = await callKerjanTool<unknown>(config, 'list_members', {}, signal)
-      return { members: normalizeMembers(raw) }
+      return cleanJson({ members: normalizeMembers(raw) })
     } catch (err) {
       const message = errorMessage(err)
       orca.log(`Kerjan list_members failed: ${message}`)
-      return { members: [], error: message }
+      return cleanJson({ members: [], error: message })
     }
   })
 
@@ -955,11 +960,11 @@ export default function activate(orca: OrcaWorkerApi): void {
           (typeof res === 'object' && res?.ticket?.key ? res.ticket.key : undefined)
         const data = await fetchDashboard(orca, signal)
         orca.panels.post('kerjan.refreshed', data)
-        return { ok: true, key: storyKey }
+        return cleanJson({ ok: true, key: storyKey })
       } catch (err) {
         const message = errorMessage(err)
         orca.log(`Kerjan create_story failed: ${message}`)
-        return { ok: false, error: message }
+        return cleanJson({ ok: false, error: message })
       }
     }
   )
@@ -989,11 +994,11 @@ export default function activate(orca: OrcaWorkerApi): void {
           (typeof res === 'object' && res?.ticket?.key ? res.ticket.key : undefined)
         const data = await fetchDashboard(orca, signal)
         orca.panels.post('kerjan.refreshed', data)
-        return { ok: true, key: taskKey }
+        return cleanJson({ ok: true, key: taskKey })
       } catch (err) {
         const message = errorMessage(err)
         orca.log(`Kerjan add_task(${storyKey}) failed: ${message}`)
-        return { ok: false, error: message }
+        return cleanJson({ ok: false, error: message })
       }
     }
   )
@@ -1018,11 +1023,11 @@ export default function activate(orca: OrcaWorkerApi): void {
 
         const data = await fetchDashboard(orca, signal)
         orca.panels.post('kerjan.refreshed', data)
-        return { ok: true }
+        return cleanJson({ ok: true })
       } catch (err) {
         const message = errorMessage(err)
         orca.log(`Kerjan updateTask(${key}) failed: ${message}`)
-        return { ok: false, error: message }
+        return cleanJson({ ok: false, error: message })
       }
     }
   )

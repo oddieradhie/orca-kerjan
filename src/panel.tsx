@@ -363,6 +363,9 @@ async function refreshDashboard(force = false): Promise<void> {
     const data = await plugin.request('kerjan.dashboard', { force })
     if (isAborted()) return
     set(dashboardAtom, data)
+    if (!data.error) {
+      set(feedbackAtom, null)
+    }
     if (data.needsSetup) {
       populateConfigForm(data)
     }
@@ -2001,6 +2004,9 @@ export function setup(ctx: PanelContext): void {
       const prevNeedsSetup = Boolean(read(dashboardAtom)?.needsSetup)
       set(dashboardAtom, data)
       set(loadingAtom, false)
+      if (!data.error) {
+        set(feedbackAtom, null)
+      }
       if (data.needsSetup) {
         populateConfigForm(data)
       } else if (prevNeedsSetup) {
