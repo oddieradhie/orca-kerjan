@@ -170,6 +170,27 @@ export default defineCheck({
       }
     }
   },
+  boardView: {
+    persisted: { plugin: { viewMode: 'board' } },
+    requests: {
+      'kerjan.dashboard': {
+        tickets: [],
+        projects: [],
+        sprints: mockSprints,
+        products: mockProducts,
+        defaultSprintId: 107,
+        defaultProductId: 24,
+        workspaceCode: 'PRD',
+        assigneeId: 35,
+        counts: { inProgress: 0, todo: 0, done: 0 },
+        fetchedAt: 0
+      },
+      'kerjan.sprintTickets': {
+        sprintId: 107,
+        stories: mockSprintStories
+      }
+    }
+  },
   backlogView: {
     persisted: { plugin: { viewMode: 'backlog' } },
     requests: {

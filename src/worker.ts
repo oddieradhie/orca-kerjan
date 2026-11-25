@@ -17,7 +17,7 @@ import './protocol'
 
 const DEFAULT_API_URL = ''
 const DEFAULT_API_TOKEN = ''
-export const CURRENT_VERSION = '1.1.4'
+export const CURRENT_VERSION = '1.1.5'
 const GITHUB_MANIFEST_URL =
   'https://raw.githubusercontent.com/oddieradhie/orca-kerjan/main/orca-plugin.json'
 const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1000
@@ -860,6 +860,7 @@ export default function activate(orca: OrcaWorkerApi): void {
 
   orca.panels.handle('kerjan.sprintTickets', async ({ sprintId }, { signal }) => {
     const config = await readConfig(orca)
+    orca.log(`Kerjan sprintTickets(${sprintId}) started`)
     try {
       const [raw, memberMap] = await Promise.all([
         callKerjanTool<unknown>(
@@ -870,9 +871,11 @@ export default function activate(orca: OrcaWorkerApi): void {
         ),
         getMemberMap(config, signal)
       ])
+      const stories = normalizeStories(raw, memberMap)
+      orca.log(`Kerjan sprintTickets(${sprintId}) done: ${stories.length} stories`)
       return cleanJson({
         sprintId,
-        stories: normalizeStories(raw, memberMap)
+        stories
       })
     } catch (err) {
       const message = errorMessage(err)

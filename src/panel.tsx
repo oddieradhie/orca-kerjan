@@ -50,7 +50,7 @@ type FeedbackState = {
   message: string
 } | null
 
-type ViewMode = 'tasks' | 'sprints' | 'backlog'
+type ViewMode = 'tasks' | 'board' | 'sprints' | 'backlog'
 
 const dashboardAtom = atom<KerjanDashboardData | null>(null)
 const loadingAtom = atom<boolean>(true)
@@ -73,6 +73,15 @@ const sprintLoadingAtom = atom<boolean>(false)
 const sprintErrorAtom = atom<string | null>(null)
 const sprintSearchAtom = atom<string>('')
 const sprintOnlyMineAtom = atom('sprintOnlyMine', false, { persist: 'plugin' })
+const sprintStatusFilterAtom = atom<string>('sprintStatusFilter', 'all', { persist: 'plugin' })
+const expandedSprintStoriesAtom = atom<Record<string, boolean>>({})
+
+const boardSearchAtom = atom<string>('')
+const boardOnlyMineAtom = atom('boardOnlyMine', false, { persist: 'plugin' })
+const boardItemTypeAtom = atom<'stories' | 'tasks'>('boardCardType', 'stories', {
+  persist: 'plugin'
+})
+const boardColumnLimitsAtom = atom<Record<string, number>>({})
 
 const selectedProductIdAtom = atom<number>('selectedProductId', 0, { persist: 'plugin' })
 const backlogStoriesAtom = atom<KerjanStoryItem[]>([])
@@ -116,7 +125,7 @@ function isAborted(): boolean {
 
 function statusTone(status: string): Tone {
   if (status === 'done') return 'success'
-  if (status === 'in_progress' || status === 'ready_for_qa') return 'accent'
+  if (status === 'in_progress' || status === 'ready_for_qa' || status === 'testing') return 'accent'
   if (status === 'todo') return 'warning'
   return 'neutral'
 }
@@ -126,7 +135,8 @@ function statusBadgeText(status: string): string {
   if (status === 'in_progress') return 'IN PROGRESS'
   if (status === 'todo') return 'TO DO'
   if (status === 'ready_for_qa') return 'READY FOR QA'
-  return status.toUpperCase()
+  if (status === 'testing') return 'TESTING'
+  return status.toUpperCase().replace(/_/g, ' ')
 }
 
 function taskTypeTone(taskType?: string | null, severity?: string | null): Tone {
@@ -152,6 +162,7 @@ function statusLabel(status: string): string {
   if (status === 'todo') return 'To Do'
   if (status === 'done') return 'Done'
   if (status === 'ready_for_qa') return 'Ready for QA'
+  if (status === 'testing') return 'Testing'
   return status
 }
 
@@ -226,38 +237,50 @@ function resolveProductSelection(data: KerjanDashboardData): number {
 }
 
 async function loadSprintTickets(sprintId: number): Promise<void> {
+  const signal = activeSignal
   set(sprintLoadingAtom, true)
   set(sprintErrorAtom, null)
   try {
-    const res = await plugin.request('kerjan.sprintTickets', { sprintId })
-    if (isAborted()) return
+    const res = await Promise.race([
+      plugin.request('kerjan.sprintTickets', { sprintId }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Request timed out loading sprint items')), 15000)
+      )
+    ])
+    if (signal?.aborted) return
     set(sprintStoriesAtom, res.stories)
     set(sprintLoadedIdAtom, res.sprintId)
     if (res.error) set(sprintErrorAtom, res.error)
   } catch (err) {
-    if (isAborted()) return
+    if (signal?.aborted) return
     set(sprintErrorAtom, err instanceof Error ? err.message : String(err))
   } finally {
-    if (!isAborted()) set(sprintLoadingAtom, false)
+    set(sprintLoadingAtom, false)
   }
 }
 
 async function loadBacklogTickets(productId: number): Promise<void> {
+  const signal = activeSignal
   set(backlogLoadingAtom, true)
   set(backlogErrorAtom, null)
   try {
-    const res = await plugin.request('kerjan.backlogTickets', {
-      productId: productId > 0 ? productId : null
-    })
-    if (isAborted()) return
+    const res = await Promise.race([
+      plugin.request('kerjan.backlogTickets', {
+        productId: productId > 0 ? productId : null
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Request timed out loading backlog items')), 15000)
+      )
+    ])
+    if (signal?.aborted) return
     set(backlogStoriesAtom, res.stories)
     set(backlogLoadedProductAtom, productId)
     if (res.error) set(backlogErrorAtom, res.error)
   } catch (err) {
-    if (isAborted()) return
+    if (signal?.aborted) return
     set(backlogErrorAtom, err instanceof Error ? err.message : String(err))
   } finally {
-    if (!isAborted()) set(backlogLoadingAtom, false)
+    set(backlogLoadingAtom, false)
   }
 }
 
@@ -379,7 +402,7 @@ async function refreshDashboard(force = false): Promise<void> {
     const sprintId = resolveSprintSelection(data)
     const productId = resolveProductSelection(data)
     const mode = read(viewModeAtom)
-    if (mode === 'sprints' && sprintId !== null) {
+    if ((mode === 'sprints' || mode === 'board') && sprintId !== null) {
       void loadSprintTickets(sprintId)
     } else if (mode === 'backlog') {
       void loadBacklogTickets(productId)
@@ -404,7 +427,7 @@ function switchViewMode(mode: ViewMode): void {
   set(feedbackAtom, null)
   const data = read(dashboardAtom)
   if (!data) return
-  if (mode === 'sprints') {
+  if (mode === 'sprints' || mode === 'board') {
     const sprintId = resolveSprintSelection(data)
     if (sprintId !== null && read(sprintLoadedIdAtom) !== sprintId) {
       void loadSprintTickets(sprintId)
@@ -644,7 +667,7 @@ async function submitCreateStory(): Promise<void> {
     set(addStoryDescAtom, '')
 
     const currentMode = read(viewModeAtom)
-    if (currentMode === 'sprints') {
+    if (currentMode === 'sprints' || currentMode === 'board') {
       const sprintIdToRefresh = read(selectedSprintIdAtom)
       if (sprintIdToRefresh) void loadSprintTickets(sprintIdToRefresh)
     } else if (currentMode === 'backlog') {
@@ -814,7 +837,7 @@ function TicketCard({
   ticket,
   busyAction,
   showQuickActions = true,
-  showAssignee = false
+  showAssignee = true
 }: {
   ticket: KerjanTicket
   busyAction: string | null
@@ -878,7 +901,7 @@ function TicketCard({
       </Row>
 
       <Text size="sm" weight="medium">
-        {ticket.assignee_name ? `${ticket.title} - ${ticket.assignee_name}` : ticket.title}
+        {ticket.title}
       </Text>
 
       {ticket.story_key || ticket.sprint_name ? (
@@ -1030,6 +1053,7 @@ function SprintView({
   error,
   query,
   onlyMine,
+  statusFilter,
   assigneeId,
   busyAction,
   epics,
@@ -1044,6 +1068,7 @@ function SprintView({
   error: string | null
   query: string
   onlyMine: boolean
+  statusFilter: string
   assigneeId: number
   busyAction: string | null
   epics: readonly KerjanEpicItem[]
@@ -1082,23 +1107,51 @@ function SprintView({
   const periodText = formatDateRange(activeSprint.start_date, activeSprint.end_date) ?? '-'
   const stateTone = sprintStateTone(activeSprint.state)
 
+  const baseTasks = onlyMine ? allTasks.filter((t) => t.assignee_id === assigneeId) : allTasks
+  const countAll = baseTasks.length
+  const countActive = baseTasks.filter((t) => t.status !== 'done' && t.status !== 'canceled').length
+  const countInProgress = baseTasks.filter((t) => t.status === 'in_progress').length
+  const countTodo = baseTasks.filter((t) => t.status === 'todo').length
+  const countDone = baseTasks.filter((t) => t.status === 'done').length
+
+  function taskMatchesStatus(status: string): boolean {
+    if (statusFilter === 'all') return true
+    if (statusFilter === 'active') return status !== 'done' && status !== 'canceled'
+    return status === statusFilter
+  }
+
   const normalizedQuery = query.trim().toLowerCase()
+  const expandedStories = read(expandedSprintStoriesAtom)
   const filteredStories = stories.filter((story) => {
-    const tasks = story.tasks ?? []
-    if (onlyMine && !tasks.some((t) => t.assignee_id === assigneeId)) {
-      return false
+    const allStoryTasks = story.tasks ?? []
+    const mineMatchedTasks = onlyMine
+      ? allStoryTasks.filter((t) => t.assignee_id === assigneeId)
+      : allStoryTasks
+
+    if (allStoryTasks.length > 0) {
+      const statusMatched = mineMatchedTasks.filter((t) => taskMatchesStatus(t.status))
+      if (statusMatched.length === 0) return false
+
+      if (!normalizedQuery) return true
+      if (
+        story.key.toLowerCase().includes(normalizedQuery) ||
+        story.title.toLowerCase().includes(normalizedQuery)
+      ) {
+        return true
+      }
+      return statusMatched.some(
+        (t) =>
+          t.key.toLowerCase().includes(normalizedQuery) ||
+          t.title.toLowerCase().includes(normalizedQuery)
+      )
     }
+
+    if (onlyMine && story.assignee_id !== assigneeId) return false
+    if (!taskMatchesStatus(story.status)) return false
     if (!normalizedQuery) return true
-    if (
+    return (
       story.key.toLowerCase().includes(normalizedQuery) ||
       story.title.toLowerCase().includes(normalizedQuery)
-    ) {
-      return true
-    }
-    return tasks.some(
-      (t) =>
-        t.key.toLowerCase().includes(normalizedQuery) ||
-        t.title.toLowerCase().includes(normalizedQuery)
     )
   })
 
@@ -1180,6 +1233,49 @@ function SprintView({
         onChange={(checked) => set(sprintOnlyMineAtom, checked)}
       />
 
+      <Row gap="xs" wrap align="center">
+        <Button
+          size="xs"
+          variant={statusFilter === 'all' ? 'solid' : 'outline'}
+          tone={statusFilter === 'all' ? 'accent' : 'neutral'}
+          onPress={() => set(sprintStatusFilterAtom, 'all')}
+        >
+          {`All (${countAll})`}
+        </Button>
+        <Button
+          size="xs"
+          variant={statusFilter === 'active' ? 'solid' : 'outline'}
+          tone={statusFilter === 'active' ? 'accent' : 'neutral'}
+          onPress={() => set(sprintStatusFilterAtom, 'active')}
+        >
+          {`Active (${countActive})`}
+        </Button>
+        <Button
+          size="xs"
+          variant={statusFilter === 'in_progress' ? 'solid' : 'outline'}
+          tone={statusFilter === 'in_progress' ? 'accent' : 'neutral'}
+          onPress={() => set(sprintStatusFilterAtom, 'in_progress')}
+        >
+          {`WIP (${countInProgress})`}
+        </Button>
+        <Button
+          size="xs"
+          variant={statusFilter === 'todo' ? 'solid' : 'outline'}
+          tone={statusFilter === 'todo' ? 'accent' : 'neutral'}
+          onPress={() => set(sprintStatusFilterAtom, 'todo')}
+        >
+          {`To Do (${countTodo})`}
+        </Button>
+        <Button
+          size="xs"
+          variant={statusFilter === 'done' ? 'solid' : 'outline'}
+          tone={statusFilter === 'done' ? 'accent' : 'neutral'}
+          onPress={() => set(sprintStatusFilterAtom, 'done')}
+        >
+          {`Done (${countDone})`}
+        </Button>
+      </Row>
+
       <Row justify="between" align="center">
         <Button
           size="xs"
@@ -1211,7 +1307,7 @@ function SprintView({
         </Callout>
       ) : null}
 
-      {loading ? (
+      {loading && stories.length === 0 ? (
         <Row gap="sm" align="center">
           <Spinner label="Loading sprint items" />
           <Text muted size="sm">
@@ -1222,7 +1318,7 @@ function SprintView({
         <EmptyState
           title="No stories"
           description={
-            onlyMine || normalizedQuery
+            onlyMine || normalizedQuery || statusFilter !== 'all'
               ? 'No stories match your filter in this sprint.'
               : 'No stories in this sprint yet.'
           }
@@ -1232,13 +1328,28 @@ function SprintView({
         <Stack gap="xs">
           {filteredStories.slice(0, 40).map((story) => {
             const allStoryTasks = story.tasks ?? []
-            const visibleTasks = onlyMine
+            const mineTasks = onlyMine
               ? allStoryTasks.filter((t) => t.assignee_id === assigneeId)
               : allStoryTasks
+            const visibleTasks = mineTasks.filter((t) => {
+              if (!taskMatchesStatus(t.status)) return false
+              if (!normalizedQuery) return true
+              if (
+                story.key.toLowerCase().includes(normalizedQuery) ||
+                story.title.toLowerCase().includes(normalizedQuery)
+              ) {
+                return true
+              }
+              return (
+                t.key.toLowerCase().includes(normalizedQuery) ||
+                t.title.toLowerCase().includes(normalizedQuery)
+              )
+            })
             const doneCount = allStoryTasks.filter((t) => t.status === 'done').length
             const hasMine = allStoryTasks.some((t) => t.assignee_id === assigneeId)
             const storyTone = statusTone(story.status)
             const allDone = allStoryTasks.length > 0 && doneCount === allStoryTasks.length
+            const isOpen = expandedStories[story.key] ?? (statusFilter !== 'all' ? true : hasMine)
 
             return (
               <Box key={story.key} border={true} background="card" radius="md" padding="xs" gap="xs">
@@ -1252,40 +1363,465 @@ function SprintView({
                   ) : null}
                 </Row>
                 <Collapsible
-                  title={`${story.key} · ${story.title.slice(0, 90)}${story.assignee_name ? ` - ${story.assignee_name}` : ''}`}
-                  defaultOpen={hasMine}
+                  title={`${story.key} · ${story.title.slice(0, 90)}`}
+                  open={isOpen}
+                  onChange={(nextOpen) =>
+                    set(expandedSprintStoriesAtom, {
+                      ...read(expandedSprintStoriesAtom),
+                      [story.key]: nextOpen
+                    })
+                  }
                 >
-                  <Stack gap="xs">
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      icon="info"
-                      onPress={() => void openTicketDetail(story)}
-                    >
-                      {`Story Details (${story.key})`}
-                    </Button>
-                    {visibleTasks.length > 0 ? (
-                      <Stack gap="xs">
-                        {visibleTasks.map((t) => (
-                          <TicketCard
-                            key={t.key}
-                            ticket={t}
-                            busyAction={busyAction}
-                            showAssignee
-                          />
-                        ))}
-                      </Stack>
-                    ) : (
-                      <Text muted size="xs">
-                        No tasks in this story yet.
-                      </Text>
-                    )}
-                  </Stack>
+                  {isOpen ? (
+                    <Stack gap="xs">
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        icon="info"
+                        onPress={() => void openTicketDetail(story)}
+                      >
+                        {`Story Details (${story.key})`}
+                      </Button>
+                      {visibleTasks.length > 0 ? (
+                        <Stack gap="xs">
+                          {visibleTasks.map((t) => (
+                            <TicketCard
+                              key={t.key}
+                              ticket={t}
+                              busyAction={busyAction}
+                              showAssignee
+                            />
+                          ))}
+                        </Stack>
+                      ) : (
+                        <Text muted size="xs">
+                          No tasks in this story yet.
+                        </Text>
+                      )}
+                    </Stack>
+                  ) : null}
                 </Collapsible>
               </Box>
             )
           })}
         </Stack>
+      )}
+    </Stack>
+  )
+}
+
+function KanbanCard({
+  ticket,
+  busyAction,
+  currentUserId
+}: {
+  ticket: KerjanTicket | KerjanStoryItem
+  busyAction: string | null
+  currentUserId: number
+}) {
+  const isBusy = busyAction !== null
+  const isStory = ticket.kind === 'story'
+  const isTask = !isStory
+  const isOwnTask = isTask && currentUserId > 0 && ticket.assignee_id === currentUserId
+  const isTodo = ticket.status === 'todo'
+  const isInProgress = ticket.status === 'in_progress'
+  const isReadyForQa = ticket.status === 'ready_for_qa'
+  const isTesting =
+    ticket.status === 'testing' || ticket.status === 'in_testing' || ticket.status === 'qa'
+  const isDone = ticket.status === 'done'
+
+  const storyTasks = isStory ? ((ticket as KerjanStoryItem).tasks ?? []) : []
+  const doneTasksCount = isStory ? storyTasks.filter((t) => t.status === 'done').length : 0
+
+  return (
+    <Box border={true} background="card" radius="sm" padding="xs" gap="xs">
+      <Row justify="between" align="center" wrap>
+        <Row gap="xs" align="center" wrap>
+          <Button
+            size="xs"
+            variant="outline"
+            icon={ticketIcon(ticket)}
+            onPress={() => void openTicketDetail(ticket)}
+          >
+            {ticket.key}
+          </Button>
+          {isStory ? (
+            <Badge tone="accent">STORY</Badge>
+          ) : ticket.task_type ? (
+            <Badge tone={taskTypeTone(ticket.task_type, ticket.severity)}>
+              {ticket.task_type.toUpperCase()}
+            </Badge>
+          ) : null}
+          {typeof ticket.estimate === 'number' && ticket.estimate > 0 ? (
+            <Badge tone="neutral">{`${ticket.estimate}h`}</Badge>
+          ) : null}
+          {ticket.assignee_name ? (
+            <Badge tone={assigneeTone(ticket.assignee_id, currentUserId)}>
+              {ticket.assignee_name}
+            </Badge>
+          ) : null}
+        </Row>
+      </Row>
+
+      <Text size="xs" weight="medium">
+        {ticket.title}
+      </Text>
+
+      {isStory ? (
+        storyTasks.length > 0 ? (
+          <Text size="xs" muted>
+            {`${doneTasksCount}/${storyTasks.length} tasks done`}
+          </Text>
+        ) : null
+      ) : ticket.story_key ? (
+        <Text size="xs" muted>
+          {ticket.story_key} {ticket.story_title ? `· ${ticket.story_title.slice(0, 36)}` : ''}
+        </Text>
+      ) : null}
+
+      {isOwnTask ? (
+        <Row justify="end" align="center" gap="xs" wrap>
+          {isTodo ? (
+            <Button
+              size="xs"
+              tone="accent"
+              variant="ghost"
+              icon="play"
+              disabled={isBusy}
+              onPress={() => void moveTicketStatus(ticket.key, 'in_progress')}
+            >
+              Start
+            </Button>
+          ) : null}
+          {isInProgress ? (
+            <>
+              <Button
+                size="xs"
+                tone="neutral"
+                variant="ghost"
+                disabled={isBusy}
+                onPress={() => void moveTicketStatus(ticket.key, 'todo')}
+              >
+                To Do
+              </Button>
+              <Button
+                size="xs"
+                tone="neutral"
+                variant="ghost"
+                disabled={isBusy}
+                onPress={() => void moveTicketStatus(ticket.key, 'ready_for_qa')}
+              >
+                Ready QA
+              </Button>
+              <Button
+                size="xs"
+                tone="success"
+                variant="ghost"
+                icon="check"
+                disabled={isBusy}
+                onPress={() => void moveTicketStatus(ticket.key, 'done')}
+              >
+                Done
+              </Button>
+            </>
+          ) : null}
+          {isReadyForQa ? (
+            <>
+              <Button
+                size="xs"
+                tone="neutral"
+                variant="ghost"
+                disabled={isBusy}
+                onPress={() => void moveTicketStatus(ticket.key, 'in_progress')}
+              >
+                Dev
+              </Button>
+              <Button
+                size="xs"
+                tone="accent"
+                variant="ghost"
+                icon="play"
+                disabled={isBusy}
+                onPress={() => void moveTicketStatus(ticket.key, 'testing')}
+              >
+                Testing
+              </Button>
+            </>
+          ) : null}
+          {isTesting ? (
+            <>
+              <Button
+                size="xs"
+                tone="warning"
+                variant="ghost"
+                disabled={isBusy}
+                onPress={() => void moveTicketStatus(ticket.key, 'in_progress')}
+              >
+                Fail
+              </Button>
+              <Button
+                size="xs"
+                tone="success"
+                variant="ghost"
+                icon="check"
+                disabled={isBusy}
+                onPress={() => void moveTicketStatus(ticket.key, 'done')}
+              >
+                Done
+              </Button>
+            </>
+          ) : null}
+          {isDone ? (
+            <Button
+              size="xs"
+              tone="neutral"
+              variant="ghost"
+              icon="refresh"
+              disabled={isBusy}
+              onPress={() => void moveTicketStatus(ticket.key, 'in_progress')}
+            >
+              Reopen
+            </Button>
+          ) : null}
+        </Row>
+      ) : null}
+    </Box>
+  )
+}
+
+function BoardView({
+  sprints,
+  selectedSprintId,
+  stories,
+  loading,
+  error,
+  query,
+  onlyMine,
+  assigneeId,
+  busyAction
+}: {
+  sprints: readonly KerjanSprintItem[]
+  selectedSprintId: number | null
+  stories: readonly KerjanStoryItem[]
+  loading: boolean
+  error: string | null
+  query: string
+  onlyMine: boolean
+  assigneeId: number
+  busyAction: string | null
+}) {
+  if (sprints.length === 0) {
+    return (
+      <EmptyState
+        title="No sprints found"
+        description="Board items will appear once sprint data finishes loading."
+        icon="blocks"
+      />
+    )
+  }
+
+  const activeSprint = sprints.find((s) => s.id === selectedSprintId) ?? sprints[0]
+  const sprintOptions = sprints.map((s) => ({
+    value: String(s.id),
+    label: `[${s.state.toUpperCase()}] ${s.name}`
+  }))
+
+  const allTasks = stories.flatMap((s) => s.tasks ?? [])
+  const normalizedQuery = query.trim().toLowerCase()
+
+  const filteredTasks = allTasks.filter((t) => {
+    if (onlyMine && t.assignee_id !== assigneeId) return false
+    if (!normalizedQuery) return true
+    return (
+      t.key.toLowerCase().includes(normalizedQuery) ||
+      t.title.toLowerCase().includes(normalizedQuery) ||
+      (t.story_key?.toLowerCase().includes(normalizedQuery) ?? false) ||
+      (t.story_title?.toLowerCase().includes(normalizedQuery) ?? false)
+    )
+  })
+
+  const filteredStories = stories.filter((s) => {
+    if (onlyMine) {
+      const assignedToMe =
+        s.assignee_id === assigneeId ||
+        (s.tasks ?? []).some((t) => t.assignee_id === assigneeId)
+      if (!assignedToMe) return false
+    }
+    if (!normalizedQuery) return true
+    return (
+      s.key.toLowerCase().includes(normalizedQuery) ||
+      s.title.toLowerCase().includes(normalizedQuery) ||
+      (s.tasks ?? []).some(
+        (t) =>
+          t.key.toLowerCase().includes(normalizedQuery) ||
+          t.title.toLowerCase().includes(normalizedQuery)
+      )
+    )
+  })
+
+  const itemType = read(boardItemTypeAtom)
+  const items = itemType === 'stories' ? filteredStories : filteredTasks
+
+  const todoItems = items.filter(
+    (t) =>
+      t.status === 'todo' ||
+      (!['in_progress', 'ready_for_qa', 'testing', 'in_testing', 'qa', 'done'].includes(t.status))
+  )
+  const inProgressItems = items.filter((t) => t.status === 'in_progress')
+  const readyQaItems = items.filter((t) => t.status === 'ready_for_qa')
+  const testingItems = items.filter(
+    (t) => t.status === 'testing' || t.status === 'in_testing' || t.status === 'qa'
+  )
+  const doneItems = items.filter((t) => t.status === 'done')
+
+  const columns = [
+    { id: 'todo', label: 'To Do', tone: 'warning' as Tone, items: todoItems },
+    { id: 'in_progress', label: 'In Progress', tone: 'accent' as Tone, items: inProgressItems },
+    { id: 'ready_for_qa', label: 'Ready for QA', tone: 'neutral' as Tone, items: readyQaItems },
+    { id: 'testing', label: 'Testing', tone: 'accent' as Tone, items: testingItems },
+    { id: 'done', label: 'Done', tone: 'success' as Tone, items: doneItems }
+  ]
+
+  return (
+    <Stack gap="sm">
+      <Box border={true} background="card" radius="md" padding="xs" gap="xs">
+        <Select
+          label="Select Sprint"
+          labelHidden
+          options={sprintOptions}
+          value={String(activeSprint.id)}
+          disabled={loading}
+          onChange={(value) => {
+            const nextId = Number(value)
+            if (!Number.isFinite(nextId)) return
+            set(selectedSprintIdAtom, nextId)
+            void loadSprintTickets(nextId)
+          }}
+        />
+
+        <Input
+          label="Search in board"
+          labelHidden
+          type="search"
+          placeholder="Search key, title, or story..."
+          value={query}
+          onChange={(value) => set(boardSearchAtom, value)}
+        />
+
+        <Row justify="between" align="center" wrap gap="xs">
+          <Row gap="xs" align="center">
+            <Button
+              size="xs"
+              variant={itemType === 'stories' ? 'solid' : 'outline'}
+              tone={itemType === 'stories' ? 'accent' : 'neutral'}
+              onPress={() => set(boardItemTypeAtom, 'stories')}
+            >
+              {`Stories (${filteredStories.length})`}
+            </Button>
+            <Button
+              size="xs"
+              variant={itemType === 'tasks' ? 'solid' : 'outline'}
+              tone={itemType === 'tasks' ? 'accent' : 'neutral'}
+              onPress={() => set(boardItemTypeAtom, 'tasks')}
+            >
+              {`Tasks (${filteredTasks.length})`}
+            </Button>
+          </Row>
+
+          <Switch
+            label="Only my items"
+            checked={onlyMine}
+            onChange={(checked) => set(boardOnlyMineAtom, checked)}
+          />
+        </Row>
+      </Box>
+
+      {error ? (
+        <Callout tone="warning" title="Failed to load sprint" icon="warning">
+          {error}
+        </Callout>
+      ) : null}
+
+      {loading && stories.length === 0 ? (
+        <Row gap="sm" align="center">
+          <Spinner label="Loading board items" />
+          <Text muted size="sm">
+            Fetching board items...
+          </Text>
+        </Row>
+      ) : items.length === 0 ? (
+        <EmptyState
+          title={`No ${itemType} in board`}
+          description={
+            onlyMine || normalizedQuery
+              ? `No ${itemType} match your filter in this sprint.`
+              : `No ${itemType} in this sprint yet.`
+          }
+          icon="blocks"
+        />
+      ) : (
+        <Box direction="row" gap="sm" align="start" scroll="x">
+          {columns.map((col) => {
+            const columnLimits = read(boardColumnLimitsAtom)
+            const limit = columnLimits[col.id] ?? 25
+            const visibleColItems = col.items.slice(0, limit)
+            const remaining = col.items.length - visibleColItems.length
+
+            return (
+              <Box
+                key={col.id}
+                width={260}
+                minWidth={240}
+                shrink={false}
+                background="muted"
+                border={true}
+                radius="md"
+                padding="xs"
+                gap="xs"
+              >
+                <Row justify="between" align="center">
+                  <Row gap="xs" align="center">
+                    <Badge tone={col.tone}>{col.label.toUpperCase()}</Badge>
+                    <Text size="xs" muted weight="semibold">{`(${col.items.length})`}</Text>
+                  </Row>
+                </Row>
+                {visibleColItems.length > 0 ? (
+                  <Stack gap="xs">
+                    {visibleColItems.map((item) => (
+                      <KanbanCard
+                        key={item.key}
+                        ticket={item}
+                        busyAction={busyAction}
+                        currentUserId={assigneeId}
+                      />
+                    ))}
+                    {remaining > 0 ? (
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        tone="neutral"
+                        onPress={() =>
+                          set(boardColumnLimitsAtom, {
+                            ...read(boardColumnLimitsAtom),
+                            [col.id]: limit + 25
+                          })
+                        }
+                      >
+                        {`Load More (+${Math.min(25, remaining)})`}
+                      </Button>
+                    ) : null}
+                  </Stack>
+                ) : (
+                  <Box padding="md" align="center">
+                    <Text size="xs" muted>
+                      {`No ${itemType}`}
+                    </Text>
+                  </Box>
+                )}
+              </Box>
+            )
+          })}
+        </Box>
       )}
     </Stack>
   )
@@ -1316,6 +1852,7 @@ function BacklogView({
   showAddStory: boolean
   addStorySprintId: number | null
 }) {
+  const currentUserId = read(dashboardAtom)?.assigneeId ?? 0
   const productMap = new Map<number, string>()
   for (const p of products) {
     productMap.set(p.id, p.name)
@@ -1327,6 +1864,7 @@ function BacklogView({
   ]
 
   const normalizedQuery = query.trim().toLowerCase()
+  const expandedStories = read(expandedSprintStoriesAtom)
   const filteredStories = stories.filter((story) => {
     if (!normalizedQuery) return true
     return (
@@ -1438,9 +1976,14 @@ function BacklogView({
                   {typeof story.estimate === 'number' && story.estimate > 0 ? (
                     <Badge tone="neutral">{`${story.estimate}h`}</Badge>
                   ) : null}
+                  {story.assignee_name ? (
+                    <Badge tone={assigneeTone(story.assignee_id, currentUserId)}>
+                      {story.assignee_name}
+                    </Badge>
+                  ) : null}
                 </Row>
                 <Text size="sm" weight="medium">
-                  {story.assignee_name ? `${story.title} - ${story.assignee_name}` : story.title}
+                  {story.title}
                 </Text>
               </Box>
             )
@@ -1785,7 +2328,7 @@ function TicketDetailView({
                   ) : null}
                 </Row>
                 <Text size="xs" weight="medium">
-                  {t.assignee_name ? `${t.title} - ${t.assignee_name}` : t.title}
+                  {t.title}
                 </Text>
               </Box>
             ))}
@@ -1998,6 +2541,8 @@ function SettingsView({
 export function setup(ctx: PanelContext): void {
   activeSignal = ctx.signal
   set(showSettingsAtom, false)
+  set(sprintLoadingAtom, false)
+  set(backlogLoadingAtom, false)
   ctx.subscriptions.push(
     plugin.on('kerjan.refreshed', (data) => {
       if (isAborted()) return
@@ -2041,6 +2586,10 @@ export default function Panel() {
   const sprintError = read(sprintErrorAtom)
   const sprintQuery = read(sprintSearchAtom)
   const onlyMine = read(sprintOnlyMineAtom)
+  const sprintStatusFilter = read(sprintStatusFilterAtom)
+
+  const boardQuery = read(boardSearchAtom)
+  const boardOnlyMine = read(boardOnlyMineAtom)
 
   const selectedProductId = read(selectedProductIdAtom)
   const backlogStories = read(backlogStoriesAtom)
@@ -2069,13 +2618,16 @@ export default function Panel() {
   const donePct = totalTickets > 0 ? Math.round((counts.done / totalTickets) * 100) : 0
 
   return (
-    <Stack gap="md">
+    <Stack gap={viewMode === 'board' ? 'sm' : 'md'}>
       <Row justify="between" align="center">
         <Row gap="xs" align="center">
           <Box width={22} height={22} shrink={false}>
             <Image src="assets/kerjan-logo.png" alt="Kerjan" size="full" fit="contain" rounded />
           </Box>
           <Heading level={2}>Kerjan</Heading>
+          {data?.currentVersion ? (
+            <Badge tone="neutral">{`v${data.currentVersion}`}</Badge>
+          ) : null}
           {showDashboardChrome && data.fromCache ? <Badge tone="warning">Cached</Badge> : null}
         </Row>
         {showDashboardChrome ? (
@@ -2092,7 +2644,7 @@ export default function Panel() {
                     tone: 'accent',
                     title: `Update Tersedia (v${data.latestVersion ?? 'baru'})`,
                     message:
-                      'Untuk memperbarui plugin, jalankan di terminal:\norca plugin update kerjan\natau: orca plugin update github:oddieradhie/orca-kerjan'
+                      'Untuk memperbarui plugin via terminal:\norca plugin update oddieradhie.kerjan\n(Jika dari Community Catalog, tunggu 1-2 menit saat Orca sinkronisasi mirror.)'
                   })
                   void shell.openExternal(
                     'https://github.com/oddieradhie/orca-kerjan/releases'
@@ -2136,34 +2688,38 @@ export default function Panel() {
 
       {showDashboardChrome ? (
         <>
-          <Box columns={3} gap="xs">
-            <Box border={true} background="card" radius="md" padding="xs" align="center">
-              <Text weight="semibold" size="md" tone="accent">
-                {String(counts.inProgress)}
-              </Text>
-              <Text size="xs" muted>
-                In Progress
-              </Text>
-            </Box>
-            <Box border={true} background="card" radius="md" padding="xs" align="center">
-              <Text weight="semibold" size="md" tone="warning">
-                {String(counts.todo)}
-              </Text>
-              <Text size="xs" muted>
-                To Do
-              </Text>
-            </Box>
-            <Box border={true} background="card" radius="md" padding="xs" align="center">
-              <Text weight="semibold" size="md" tone="success">
-                {String(counts.done)}
-              </Text>
-              <Text size="xs" muted>
-                Done
-              </Text>
-            </Box>
-          </Box>
+          {viewMode !== 'board' ? (
+            <>
+              <Box columns={3} gap="xs">
+                <Box border={true} background="card" radius="md" padding="xs" align="center">
+                  <Text weight="semibold" size="md" tone="accent">
+                    {String(counts.inProgress)}
+                  </Text>
+                  <Text size="xs" muted>
+                    In Progress
+                  </Text>
+                </Box>
+                <Box border={true} background="card" radius="md" padding="xs" align="center">
+                  <Text weight="semibold" size="md" tone="warning">
+                    {String(counts.todo)}
+                  </Text>
+                  <Text size="xs" muted>
+                    To Do
+                  </Text>
+                </Box>
+                <Box border={true} background="card" radius="md" padding="xs" align="center">
+                  <Text weight="semibold" size="md" tone="success">
+                    {String(counts.done)}
+                  </Text>
+                  <Text size="xs" muted>
+                    Done
+                  </Text>
+                </Box>
+              </Box>
 
-          <Progress label={`Task Completion (${donePct}%)`} value={donePct} />
+              <Progress label={`Task Completion (${donePct}%)`} value={donePct} />
+            </>
+          ) : null}
 
           <Row gap="xs" wrap>
             <Button
@@ -2174,6 +2730,15 @@ export default function Panel() {
               onPress={() => switchViewMode('tasks')}
             >
               My Tasks
+            </Button>
+            <Button
+              size="xs"
+              icon="blocks"
+              variant={viewMode === 'board' ? 'solid' : 'outline'}
+              tone={viewMode === 'board' ? 'accent' : 'neutral'}
+              onPress={() => switchViewMode('board')}
+            >
+              Board
             </Button>
             <Button
               size="xs"
@@ -2237,6 +2802,18 @@ export default function Panel() {
           showAddTask={showAddTask}
           isEditingTask={isEditingTask}
         />
+      ) : viewMode === 'board' ? (
+        <BoardView
+          sprints={data?.sprints ?? []}
+          selectedSprintId={selectedSprintId}
+          stories={sprintStories}
+          loading={sprintLoading}
+          error={sprintError}
+          query={boardQuery}
+          onlyMine={boardOnlyMine}
+          assigneeId={data?.assigneeId ?? 0}
+          busyAction={busyAction}
+        />
       ) : viewMode === 'sprints' ? (
         <SprintView
           sprints={data?.sprints ?? []}
@@ -2246,6 +2823,7 @@ export default function Panel() {
           error={sprintError}
           query={sprintQuery}
           onlyMine={onlyMine}
+          statusFilter={sprintStatusFilter}
           assigneeId={data?.assigneeId ?? 0}
           busyAction={busyAction}
           epics={epics}
