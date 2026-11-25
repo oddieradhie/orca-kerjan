@@ -878,7 +878,7 @@ function TicketCard({
       </Row>
 
       <Text size="sm" weight="medium">
-        {ticket.title}
+        {ticket.assignee_name ? `${ticket.title} - ${ticket.assignee_name}` : ticket.title}
       </Text>
 
       {ticket.story_key || ticket.sprint_name ? (
@@ -1252,7 +1252,7 @@ function SprintView({
                   ) : null}
                 </Row>
                 <Collapsible
-                  title={`${story.key} · ${story.title.slice(0, 90)}`}
+                  title={`${story.key} · ${story.title.slice(0, 90)}${story.assignee_name ? ` - ${story.assignee_name}` : ''}`}
                   defaultOpen={hasMine}
                 >
                   <Stack gap="xs">
@@ -1440,7 +1440,7 @@ function BacklogView({
                   ) : null}
                 </Row>
                 <Text size="sm" weight="medium">
-                  {story.title}
+                  {story.assignee_name ? `${story.title} - ${story.assignee_name}` : story.title}
                 </Text>
               </Box>
             )
@@ -1785,7 +1785,7 @@ function TicketDetailView({
                   ) : null}
                 </Row>
                 <Text size="xs" weight="medium">
-                  {t.title}
+                  {t.assignee_name ? `${t.title} - ${t.assignee_name}` : t.title}
                 </Text>
               </Box>
             ))}

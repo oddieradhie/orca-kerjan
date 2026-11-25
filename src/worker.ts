@@ -17,7 +17,7 @@ import './protocol'
 
 const DEFAULT_API_URL = ''
 const DEFAULT_API_TOKEN = ''
-export const CURRENT_VERSION = '1.1.3'
+export const CURRENT_VERSION = '1.1.4'
 const GITHUB_MANIFEST_URL =
   'https://raw.githubusercontent.com/oddieradhie/orca-kerjan/main/orca-plugin.json'
 const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1000
