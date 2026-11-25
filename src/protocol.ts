@@ -209,6 +209,17 @@ declare module 'orca' {
       }
       output: { ok: boolean; error?: string }
     }
+    'kerjan.updatePlugin': {
+      input: Record<string, never> | undefined
+      output: {
+        ok: boolean
+        status?: string
+        version?: string
+        previousVersion?: string
+        message?: string
+        error?: string
+      }
+    }
   }
   interface PluginPanelEvents {
     'kerjan.refreshed': KerjanDashboardData

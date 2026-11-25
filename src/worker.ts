@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import type { Disposable, JsonValue, OrcaWorkerApi } from 'orca/worker'
 import type {
   KerjanClientConfigSummary,
@@ -17,7 +19,7 @@ import './protocol'
 
 const DEFAULT_API_URL = ''
 const DEFAULT_API_TOKEN = ''
-export const CURRENT_VERSION = '1.1.5'
+export const CURRENT_VERSION = '1.1.6'
 const GITHUB_MANIFEST_URL =
   'https://raw.githubusercontent.com/oddieradhie/orca-kerjan/main/orca-plugin.json'
 const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1000
@@ -1111,6 +1113,92 @@ export default function activate(orca: OrcaWorkerApi): void {
       }
     }
   )
+
+  orca.panels.handle('kerjan.updatePlugin', async (_input, { signal }) => {
+    const candidates = [
+      '/Applications/Orca.app/Contents/Resources/bin/orca',
+      '/opt/homebrew/bin/orca',
+      '/usr/local/bin/orca'
+    ]
+    const orcaBin = candidates.find((p) => existsSync(p)) ?? 'orca'
+
+    try {
+      const { stdout, stderr } = await new Promise<{ stdout: string; stderr: string }>(
+        (resolve, reject) => {
+          const child = execFile(
+            orcaBin,
+            ['plugin', 'update', 'oddieradhie.kerjan', '--json'],
+            { timeout: 180_000, maxBuffer: 4 * 1024 * 1024 },
+            (err, out, errOut) => {
+              if (err) {
+                reject(Object.assign(err, { stdout: out, stderr: errOut }))
+                return
+              }
+              resolve({ stdout: out, stderr: errOut })
+            }
+          )
+          if (signal) {
+            signal.addEventListener(
+              'abort',
+              () => {
+                child.kill('SIGTERM')
+              },
+              { once: true }
+            )
+          }
+        }
+      )
+
+      let parsed: {
+        ok?: boolean
+        result?: { status?: string; version?: string; previousVersion?: string }
+        error?: { message?: string; code?: string }
+      } | null = null
+      try {
+        parsed = JSON.parse(stdout)
+      } catch {
+        // Non-JSON output
+      }
+
+      if (parsed?.ok && parsed.result) {
+        const status = parsed.result.status ?? 'updated'
+        const version = parsed.result.version
+        const previousVersion = parsed.result.previousVersion
+        cachedUpdateCheck = null
+        lastUpdateCheckAt = 0
+        return cleanJson({
+          ok: true,
+          status,
+          version,
+          previousVersion,
+          message:
+            status === 'updated'
+              ? `Berhasil diperbarui${previousVersion ? ` dari v${previousVersion}` : ''} ke v${version ?? 'terbaru'}.`
+              : `Plugin sudah berada di versi terbaru di katalog Orca (v${version ?? CURRENT_VERSION}).`
+        })
+      }
+
+      return cleanJson({
+        ok: false,
+        error: parsed?.error?.message || stderr.trim() || stdout.trim() || 'Gagal memperbarui plugin.'
+      })
+    } catch (err) {
+      const errObj = err as Error & { stdout?: string; stderr?: string }
+      let parsedError: string | undefined
+      if (typeof errObj.stdout === 'string' && errObj.stdout.trim()) {
+        try {
+          const parsed = JSON.parse(errObj.stdout) as { error?: { message?: string } }
+          parsedError = parsed.error?.message
+        } catch {
+          // Ignore JSON parse error
+        }
+      }
+      const message =
+        parsedError || errObj.stderr?.trim() || errorMessage(err) || 'Gagal menjalankan update.'
+      orca.log(`Kerjan updatePlugin failed: ${message}`)
+      return cleanJson({ ok: false, error: message })
+    }
+  })
 
   disposables.push(
     orca.commands.register('kerjan.refresh', async (_args, { signal }) => {

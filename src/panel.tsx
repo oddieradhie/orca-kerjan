@@ -2566,6 +2566,54 @@ export function setup(ctx: PanelContext): void {
   void refreshDashboard(false)
 }
 
+async function triggerPluginUpdate(): Promise<void> {
+  set(busyActionAtom, 'updatePlugin')
+  set(feedbackAtom, {
+    tone: 'accent',
+    title: 'Memperbarui Kerjan...',
+    message: 'Sedang mengunduh dan menerapkan pembaruan plugin. Proses ini bisa memakan waktu 1–2 menit, harap tunggu.'
+  })
+  try {
+    const res = await plugin.request('kerjan.updatePlugin', undefined)
+    if (isAborted()) return
+    if (!res.ok) {
+      set(feedbackAtom, {
+        tone: 'danger',
+        title: 'Update Gagal',
+        message: res.error || 'Gagal memperbarui plugin secara otomatis.'
+      })
+      return
+    }
+    set(feedbackAtom, {
+      tone: res.status === 'updated' ? 'success' : 'accent',
+      title: res.status === 'updated' ? `Update Berhasil (v${res.version ?? ''})` : 'Info Update',
+      message: res.message || 'Plugin berhasil diperbarui.'
+    })
+    if (res.status === 'updated') {
+      await refreshDashboard(true)
+    }
+  } catch (err) {
+    if (isAborted()) return
+    const msg = err instanceof Error ? err.message : String(err)
+    // When Orca restarts the worker during self-update, the RPC may drop cleanly.
+    if (/abort|closed|disconnect|restart/i.test(msg)) {
+      set(feedbackAtom, {
+        tone: 'success',
+        title: 'Update Diterapkan',
+        message: 'Plugin sedang dimuat ulang oleh Orca...'
+      })
+    } else {
+      set(feedbackAtom, {
+        tone: 'danger',
+        title: 'Update Gagal',
+        message: msg
+      })
+    }
+  } finally {
+    if (!isAborted()) set(busyActionAtom, null)
+  }
+}
+
 export default function Panel() {
   const data = read(dashboardAtom)
   const loading = read(loadingAtom)
@@ -2637,21 +2685,12 @@ export default function Panel() {
                 size="xs"
                 variant="solid"
                 tone="accent"
-                icon="open-external"
-                tooltip={`Update to v${data.latestVersion ?? ''} available`}
-                onPress={() => {
-                  set(feedbackAtom, {
-                    tone: 'accent',
-                    title: `Update Tersedia (v${data.latestVersion ?? 'baru'})`,
-                    message:
-                      'Untuk memperbarui plugin via terminal:\norca plugin update oddieradhie.kerjan\n(Jika dari Community Catalog, tunggu 1-2 menit saat Orca sinkronisasi mirror.)'
-                  })
-                  void shell.openExternal(
-                    'https://github.com/oddieradhie/orca-kerjan/releases'
-                  )
-                }}
+                icon="refresh"
+                disabled={busyAction !== null}
+                tooltip={`Update otomatis ke v${data.latestVersion ?? 'terbaru'}`}
+                onPress={() => void triggerPluginUpdate()}
               >
-                Update
+                {busyAction === 'updatePlugin' ? 'Updating...' : 'Update'}
               </Button>
             ) : null}
             <Button

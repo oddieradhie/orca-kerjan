@@ -3,7 +3,7 @@
   "manifestVersion": 2,
   "id": "kerjan",
   "name": "Kerjan",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "Kerjan issue tracker sidebar panel, status bar counter, ticket updates, and worktree creation for Orca.",
   "author": {
     "name": "Fathur Radhie"
